@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, Dict, List, Any
 
 import community as co
 import networkx as nx
@@ -10,21 +10,21 @@ import seaborn as sns
 from src.data_utils import normalize_val, normalize_diff_symmetric
 
 
-def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = None,
-                       end_year: int = None) -> nx.DiGraph:
+def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_year: Optional[int] = None,
+                       end_year: Optional[int] = None) -> Optional[nx.DiGraph]:
     """
     Creates a DIRECTED graph network where each edge (SourceTeam -> TargetTeam)
     represents the aggregated performance/action of the SourceTeam AGAINST the TargetTeam,
     along with the calculated differences in performance between Source and Target.
 
-    Edge attributes will only reflect the SourceTeam's actions (e.g., goals scored by Source,
+    Edge attributes reflect the SourceTeam's actions (e.g., goals scored by Source,
     fouls committed by Source) and the overall differences (Source vs Target).
-    To get TargetTeam's actions against Source, you'd look at the reverse edge (TargetTeam -> SourceTeam).
+    To obtain the TargetTeam's actions against the Source, one would inspect the reverse edge (TargetTeam -> SourceTeam).
 
     Args:
         df (pandas.DataFrame): The complete match DataFrame.
         season (str, optional): A specific season to analyze (e.g., '2016/17').
-                                Takes precedence over start_year/end_year if both are provided.
+                                This parameter takes precedence over start_year/end_year if both are provided.
                                 Defaults to None.
         start_year (int, optional): The starting year of the season range (e.g., 2014 for '2014/15').
                                     Defaults to None.
@@ -32,30 +32,29 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
                                   Defaults to None.
 
     Returns:
-        nx.DiGraph: The directed graph, or None if the data to process is empty.
+        nx.DiGraph: The directed graph, or None if the data to process is empty or invalid.
     """
 
     df_to_process = df.copy()
     current_scope_name = "the entire dataset"
 
     if season:
-        df_to_process = df[df['Season'] == season].copy()
+        df_to_process = df_to_process[df_to_process['Season'] == season].copy()
         current_scope_name = f"season {season}"
     elif start_year is not None and end_year is not None:
         if not (isinstance(start_year, int) and isinstance(end_year, int)):
-            print("Error: start_year and end_year must be integers.")
+            print("Error: 'start_year' and 'end_year' must be integers.")
             return None
         if start_year >= end_year:
-            print("Error: For a valid season range (e.g., 2016/2017), end_year must be greater than start_year.")
+            print("Error: For a valid season range (e.g., 2016/2017), 'end_year' must be greater than 'start_year'.")
             return None
 
         seasons_in_range = []
-
         for year in range(start_year, end_year):
             next_year_suffix = str(year + 1)[-2:]
             seasons_in_range.append(f"{year}/{next_year_suffix}")
 
-        df_to_process = df[df['Season'].isin(seasons_in_range)].copy()
+        df_to_process = df_to_process[df_to_process['Season'].isin(seasons_in_range)].copy()
         current_scope_name = f"seasons from {start_year}/{str(start_year + 1)[-2:]} to {end_year - 1}/{str(end_year)[-2:]}"
 
     if df_to_process.empty:
@@ -77,7 +76,7 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
         elif col not in ['HomeTeam', 'AwayTeam', 'FullTimeResult']:
             df_to_process[col] = df_to_process[col].fillna(0)
 
-    # --- Calcolo dei punti per partita ---
+    # Calculate points per match
     df_to_process['HomePoints'] = df_to_process['FullTimeResult'].apply(
         lambda x: 3 if x == 'H' else (1 if x == 'D' else 0))
     df_to_process['AwayPoints'] = df_to_process['FullTimeResult'].apply(
@@ -99,7 +98,7 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
         ht = match['HomeTeam']
         at = match['AwayTeam']
 
-        # HOME TEAM -> AWAY TEAM (HT è SOURCE, AT è TARGET)
+        # HOME TEAM -> AWAY TEAM (HT is SOURCE, AT is TARGET)
         directional_stats_agg[(ht, at)]['goals_scored_by_source'] += match['FullTimeHomeGoals']
         directional_stats_agg[(ht, at)]['goals_scored_by_target'] += match['FullTimeAwayGoals']
         directional_stats_agg[(ht, at)]['sot_by_source'] += match['HomeShotsOnTarget']
@@ -118,7 +117,7 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
         directional_stats_agg[(ht, at)]['points_scored_by_target'] += match['AwayPoints']
         directional_stats_agg[(ht, at)]['matches_played'] += 1
 
-        # AWAY TEAM -> HOME TEAM (AT è SOURCE, HT è TARGET)
+        # AWAY TEAM -> HOME TEAM (AT is SOURCE, HT is TARGET)
         directional_stats_agg[(at, ht)]['goals_scored_by_source'] += match['FullTimeAwayGoals']
         directional_stats_agg[(at, ht)]['goals_scored_by_target'] += match['FullTimeHomeGoals']
         directional_stats_agg[(at, ht)]['sot_by_source'] += match['AwayShotsOnTarget']
@@ -141,14 +140,14 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
     G = nx.DiGraph()
     G.add_nodes_from(all_teams_in_scope)
 
-    # Raccogliamo i valori per la normalizzazione.
+    # Collect values for normalization ranges
     all_goals_scored_by_source = []
     all_aggressiveness_by_source = []
     all_shot_accuracy_by_source = []
     all_control_by_source = []
     all_points_scored_by_source = []
 
-    # E anche per le DIFFERENZE (che possono essere negative o positive)
+    # Collect RAW DIFFERENCES (can be negative or positive) for symmetric normalization
     all_goals_diff = []
     all_aggressiveness_diff = []
     all_shot_accuracy_diff = []
@@ -171,7 +170,7 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
         # --- CALCULATED DIFFERENCES (Source's performance relative to Target's performance against Source) ---
         goals_diff = current_goals_scored - agg_stats['goals_scored_by_target']
         aggressiveness_diff = current_agg_by_source - (
-                    agg_stats['fouls_by_target'] + agg_stats['yc_by_target'] + 3 * agg_stats['rc_by_target'])
+                agg_stats['fouls_by_target'] + agg_stats['yc_by_target'] + 3 * agg_stats['rc_by_target'])
 
         sa_of_target = (agg_stats['sot_by_target'] / agg_stats['total_shots_by_target']) if agg_stats[
                                                                                                 'total_shots_by_target'] > 0 else 0.0
@@ -205,23 +204,25 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
         all_control_by_source.append(current_ctrl_by_source)
         all_points_scored_by_source.append(current_points_scored)
 
+        # Append RAW (signed) differences for max_abs_diff calculation
         all_goals_diff.append(goals_diff)
         all_aggressiveness_diff.append(aggressiveness_diff)
-        all_shot_accuracy_diff.append(shot_accuracy_diff)
-        all_control_diff.append(control_diff)
-        all_points_diff.append(points_diff)
+        all_shot_accuracy_diff.append(shot_accuracy_diff)  # Corrected: append raw diff
+        all_control_diff.append(control_diff)  # Corrected: append raw diff
+        all_points_diff.append(points_diff)  # Corrected: append raw diff
 
     # Calculate global min/max for normalization of source metrics (range 0-1)
     min_goals_scored, max_goals_scored = (
-    min(all_goals_scored_by_source), max(all_goals_scored_by_source)) if all_goals_scored_by_source else (0, 0)
+        min(all_goals_scored_by_source), max(all_goals_scored_by_source)) if all_goals_scored_by_source else (0, 0)
     min_agg_by_source, max_agg_by_source = (
-    min(all_aggressiveness_by_source), max(all_aggressiveness_by_source)) if all_aggressiveness_by_source else (0, 0)
+        min(all_aggressiveness_by_source), max(all_aggressiveness_by_source)) if all_aggressiveness_by_source else (
+    0, 0)
     min_sa_by_source, max_sa_by_source = (
-    min(all_shot_accuracy_by_source), max(all_shot_accuracy_by_source)) if all_shot_accuracy_by_source else (0, 0)
+        min(all_shot_accuracy_by_source), max(all_shot_accuracy_by_source)) if all_shot_accuracy_by_source else (0, 0)
     min_ctrl_by_source, max_ctrl_by_source = (
-    min(all_control_by_source), max(all_control_by_source)) if all_control_by_source else (0, 0)
+        min(all_control_by_source), max(all_control_by_source)) if all_control_by_source else (0, 0)
     min_points_scored, max_points_scored = (
-    min(all_points_scored_by_source), max(all_points_scored_by_source)) if all_points_scored_by_source else (0, 0)
+        min(all_points_scored_by_source), max(all_points_scored_by_source)) if all_points_scored_by_source else (0, 0)
 
     # Calculate GLOBAL MAX ABSOLUTE DIFFERENCE for symmetric normalization (-1 to 1)
     # This addresses the "squeezing" problem and ensures 0 difference maps to 0 normalized.
@@ -243,8 +244,7 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
         points_scored_norm = normalize_val(stats['points_scored'], min_points_scored, max_points_scored,
                                            target_range=(0, 1))
 
-        # Normalized Differences (range -1 to 1, sign retained) - MODIFICATO QUI
-        # Ora usa la nuova funzione di normalizzazione simmetrica
+        # Normalized Differences (range -1 to 1, sign retained)
         goals_diff_norm = normalize_diff_symmetric(stats['goals_diff'], max_abs_goals_diff)
         agg_diff_norm = normalize_diff_symmetric(stats['aggressiveness_diff'], max_abs_agg_diff)
         sa_diff_norm = normalize_diff_symmetric(stats['shot_accuracy_diff'], max_abs_sa_diff)
@@ -266,28 +266,28 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
                    control_norm=ctrl_norm,
                    points_norm=points_scored_norm,
 
-                   # Raw Differences
+                   # Raw Differences (signed)
                    goals_diff=stats['goals_diff'],
                    aggressiveness_diff=stats['aggressiveness_diff'],
                    shot_accuracy_diff=stats['shot_accuracy_diff'],
                    control_diff=stats['control_diff'],
                    points_diff=stats['points_diff'],
 
-                   # Absolute Raw Differences (NEW ADDITION)
+                   # Absolute Raw Differences
                    goals_diff_abs=abs(stats['goals_diff']),
                    aggressiveness_diff_abs=abs(stats['aggressiveness_diff']),
                    shot_accuracy_diff_abs=abs(stats['shot_accuracy_diff']),
                    control_diff_abs=abs(stats['control_diff']),
                    points_diff_abs=abs(stats['points_diff']),
 
-                   # Normalized Differences (range -1 to 1, sign retained) - ORA SIMMETRICHE
+                   # Normalized Differences (range -1 to 1, sign retained)
                    goals_diff_norm=goals_diff_norm,
                    aggressiveness_diff_norm=agg_diff_norm,
                    shot_accuracy_diff_norm=sa_diff_norm,
                    control_diff_norm=ctrl_diff_norm,
                    points_diff_norm=points_diff_norm,
 
-                   # Absolute Normalized Differences (range 0-1, always positive) - ORA DERIVATE DA QUELLE SIMMETRICHE
+                   # Absolute Normalized Differences (range 0-1, always positive)
                    goals_diff_norm_abs=abs(goals_diff_norm),
                    aggressiveness_diff_norm_abs=abs(agg_diff_norm),
                    shot_accuracy_diff_norm_abs=abs(sa_diff_norm),
@@ -302,77 +302,73 @@ def create_epl_network(df: pd.DataFrame, season: str = None, start_year: int = N
 
 
 def filter_graph_by_weight(
-        graph: nx.DiGraph,  # L'input rimane un grafo diretto (DiGraph)
+        graph: nx.DiGraph,  # The input remains a directed graph (DiGraph)
         metric: str,
         threshold: Optional[float],
         use_normalized_abs_diff_for_filter: bool = True,  # True: _diff_norm_abs, False: _diff_abs
         keep_above: bool = True
-) -> nx.Graph:
+) -> Optional[nx.Graph]:
     """
-    Filtra un grafo diretto basandosi sull'intensità assoluta della relazione reciproca
-    tra due squadre. Restituisce un nuovo grafo NON DIRETTO in cui un arco tra u e v
-    è incluso SOLO se la loro relazione reciproca soddisfa i criteri di filtraggio.
-    L'attributo 'weight' sull'arco risultante sarà impostato in modo da indicare la somiglianza (1 - differenza),
-    rendendolo adatto per Louvain.
+    Filters a directed graph based on the absolute intensity of the reciprocal relationship
+    between two teams. It returns a new UNDIRECTED graph where an edge between u and v
+    is included ONLY if their reciprocal relationship meets the filtering criteria.
+    The 'weight' attribute on the resulting edge will be set to indicate similarity (1 - difference),
+    making it suitable for Louvain community detection.
 
     Args:
-        graph (nx.DiGraph): Il grafo diretto originale.
-        metric (str): Il nome base della metrica per il filtraggio (es. 'goals').
-        threshold (float, optional): Il valore di soglia per il filtraggio. Se None, nessun filtraggio viene applicato.
-        use_normalized_abs_diff_for_filter (bool): Se True, il filtro considererà l'attributo
-                                                    '{metric}_diff_norm_abs' (range 0-1).
-                                                    Se False, considererà l'attributo assoluto grezzo
-                                                    '{metric}_diff_abs'.
-        keep_above (bool): Se True, mantiene le coppie dove l'intensità (la differenza) >= soglia.
-                                     Se False, mantiene le coppie dove l'intensità (la differenza) <= soglia.
+        graph (nx.DiGraph): The original directed graph.
+        metric (str): The base name of the metric for filtering (e.g., 'goals').
+        threshold (float, optional): The threshold value for filtering. If None, no filtering is applied.
+        use_normalized_abs_diff_for_filter (bool): If True, the filter will consider the
+                                                    '{metric}_diff_norm_abs' attribute (range 0-1).
+                                                    If False, it will consider the raw absolute
+                                                    '{metric}_diff_abs' attribute.
+        keep_above (bool): If True, keeps pairs where the intensity (difference) >= threshold.
+                                     If False, keeps pairs where the intensity (difference) <= threshold.
 
     Returns:
-        nx.Graph: Un nuovo grafo NON DIRETTO con archi reciproci filtrati e un attributo 'weight'
-                    adatto per Louvain (somiglianza).
-                    Restituisce None se il grafo di input è vuoto o nessun arco rimane dopo il filtraggio.
+        nx.Graph: A new UNDIRECTED graph with filtered reciprocal edges and a 'weight' attribute
+                    suitable for Louvain (representing similarity).
+                    Returns None if the input graph is empty or no edges remain after filtering.
     """
     if not graph or graph.number_of_nodes() == 0:
         print("Input graph is empty or invalid for filtering.")
         return None
 
-    # --- 1. Determina l'attributo da cui calcolare l'intensità per il filtro ---
-    # Questo è l'attributo che useremo per confrontare con il 'threshold'
-    filter_attribute_name = ""
-    if use_normalized_abs_diff_for_filter:
-        filter_attribute_name = f"{metric}_diff_norm_abs"
-    else:
-        filter_attribute_name = f"{metric}_diff_abs"
+    # Determine the attribute to use for filtering based on intensity
+    # This attribute will be compared against the 'threshold'
+    filter_attribute_name = f"{metric}_diff_norm_abs" if use_normalized_abs_diff_for_filter else f"{metric}_diff_abs"
 
-    # --- 2. Determina l'attributo sorgente per il 'weight' nel grafo risultante (per Louvain) ---
-    # Louvain ha bisogno di un peso che sia positivo e rappresenti la *forza* o *somiglianza*.
-    # Useremo sempre la versione normalizzata e assoluta della differenza per costruire questo peso,
-    # poiché è nel range [0, 1] e facile da invertire per la somiglianza.
-    weight_source_attribute_name = f"{metric}_diff_norm_abs"  # Questo è il valore della DIFFERENZA normalizzata e assoluta
+    # Determine the source attribute for the 'weight' in the resulting graph (for Louvain)
+    # Louvain requires a positive weight representing strength or similarity.
+    # The normalized absolute difference ('_diff_norm_abs') is consistently used as the base
+    # for this weight, as it is in the [0, 1] range and easily invertible to similarity.
+    weight_source_attribute_name = f"{metric}_diff_norm_abs"
 
-    # Inizializza il nuovo grafo NON DIRETTO filtrato
+    # Initialize the new FILTERED UNDIRECTED graph
     filtered_G = nx.Graph()
-    filtered_G.add_nodes_from(graph.nodes(data=True))  # Aggiungi tutti i nodi al nuovo grafo
+    filtered_G.add_nodes_from(graph.nodes(data=True))  # Add all nodes to the new graph
 
     edges_retained = 0
-    # Useremo questo set per processare ogni coppia {u,v} una sola volta, dato che il grafo risultante è non direzionato.
+    # This set will be used to process each {u,v} pair only once, as the resulting graph is undirected.
     processed_pairs = set()
 
-    # --- 3. Gestione del caso senza soglia (threshold is None) ---
+    # Handle the case where no threshold is provided
     if threshold is None:
         print(f"No threshold provided for metric '{metric}'. Creating undirected graph with all reciprocal edges.")
-        # Quando non c'è filtro, aggiungiamo tutti gli archi reciproci che esistono
+        # When no filter is applied, include all existing reciprocal edges
         for u, v, data_uv in graph.edges(data=True):
-            # Processa solo se l'arco inverso esiste e la coppia non è stata già processata (per evitare duplicati in un grafo non diretto)
+            # Process only if the reverse edge exists and the pair has not been processed yet (to avoid duplicates in an undirected graph)
             if graph.has_edge(v, u):
-                canonical_pair = tuple(sorted((u, v)))  # Ordina per avere un identificatore unico per la coppia {u,v}
+                canonical_pair = tuple(sorted((u, v)))  # Order to get a unique identifier for the {u,v} pair
                 if canonical_pair in processed_pairs:
                     continue
                 processed_pairs.add(canonical_pair)
 
-                # Ottiene il valore della differenza normalizzata e assoluta dall'arco u->v
+                # Retrieve the normalized absolute difference value from the u->v edge
                 diff_norm_abs_value = data_uv.get(weight_source_attribute_name, 0.0)
 
-                # *** CORREZIONE FINALE QUI: Trasforma la differenza in somiglianza per Louvain ***
+                # Transform the difference into a similarity weight for Louvain (1 - difference)
                 louvain_weight = 1 - diff_norm_abs_value
 
                 filtered_G.add_edge(u, v, weight=louvain_weight)
@@ -386,61 +382,60 @@ def filter_graph_by_weight(
             return None
         return filtered_G
 
-    # --- 4. Logica di filtraggio con soglia (threshold is NOT None) ---
+    # Logic for filtering with a specified threshold
     filter_condition_str = ">= threshold" if keep_above else "<= threshold"
     print(
         f"Applying reciprocal filter for '{metric}' with threshold {threshold} {filter_condition_str} on '{filter_attribute_name}'.")
 
-    # Iteriamo su tutti gli archi del grafo originale per trovare le coppie reciproche
+    # Iterate over all edges in the original graph to find reciprocal pairs
     for u, v, data_uv in graph.edges(data=True):
-        # Processa ogni coppia {u,v} una sola volta (dato che stiamo creando un grafo non direzionato)
+        # Process each {u,v} pair only once (since we are creating an undirected graph)
         canonical_pair = tuple(sorted((u, v)))
         if canonical_pair in processed_pairs:
             continue
         processed_pairs.add(canonical_pair)
 
-        # 4a. Ottieni il valore di filtro per l'arco u -> v
+        # 4a. Get the filter value for the u -> v edge
         filter_value_uv = data_uv.get(filter_attribute_name)
         if filter_value_uv is None:
-            continue  # Salta questa coppia se l'attributo di filtro non esiste per u->v
+            continue  # Skip this pair if the filter attribute does not exist for u->v
 
-        # 4b. Ottieni il valore di filtro per l'arco v -> u
-        filter_value_vu = None
-        # Controlla se l'arco inverso esiste, è fondamentale per una relazione reciproca
+        # 4b. Get the filter value for the v -> u edge
+        # Check if the reverse edge exists, which is fundamental for a reciprocal relationship
         if graph.has_edge(v, u):
             data_vu = graph.get_edge_data(v, u)
             filter_value_vu = data_vu.get(filter_attribute_name)
             if filter_value_vu is None:
-                continue  # Salta se l'arco inverso esiste ma manca l'attributo di filtro
+                continue  # Skip if the reverse edge exists but lacks the filter attribute
         else:
-            # Se l'arco inverso non esiste, questa coppia non può formare una relazione reciproca completa per il filtraggio.
+            # If the reverse edge does not exist, this pair cannot form a complete reciprocal relationship for filtering.
             continue
 
-            # A questo punto, sia u->v che v->u esistono nel grafo originale e hanno l'attributo di filtro.
+        # At this point, both u->v and v->u exist in the original graph and have the filter attribute.
 
-        # 4c. Calcola l'intensità della relazione per la coppia ai fini del filtro.
-        # Poiché _diff_norm_abs e _diff_abs sono già valori assoluti e simmetrici,
-        # l'intensità della coppia è semplicemente il valore da una delle due direzioni.
+        # 4c. Calculate the relationship intensity for the pair for filtering purposes.
+        # Since _diff_norm_abs and _diff_abs are already absolute and symmetric values,
+        # the pair's intensity is simply the value from one of the two directions.
         pair_intensity_for_filter = filter_value_uv
 
-        # 4d. Applica la condizione di filtro all'intensità della coppia
+        # 4d. Apply the filter condition to the pair's intensity
         condition_met_for_pair = False
         if (keep_above and pair_intensity_for_filter >= threshold) or \
                 (not keep_above and pair_intensity_for_filter <= threshold):
             condition_met_for_pair = True
 
-        # 4e. Se la coppia non soddisfa la condizione di filtro, la salta (non aggiunge l'arco non direzionato)
+        # 4e. If the pair does not meet the filter condition, skip it (do not add the undirected edge)
         if not condition_met_for_pair:
             continue
 
-        # 4f. Se la condizione è soddisfatta, aggiungi l'arco NON DIRETTO al filtered_G
-        # Ottiene il valore della differenza normalizzata e assoluta dall'arco u->v (o v->u, è lo stesso)
+        # 4f. If the condition is met, add the UNDIRECTED edge to filtered_G
+        # Retrieve the normalized absolute difference value from the u->v edge (or v->u, it's the same)
         diff_norm_abs_value = data_uv.get(weight_source_attribute_name, 0.0)
 
-        # *** CORREZIONE FINALE QUI: Trasforma la differenza in somiglianza per Louvain ***
+        # Transform the difference into a similarity weight for Louvain (1 - difference)
         louvain_weight = 1 - diff_norm_abs_value
 
-        filtered_G.add_edge(u, v, weight=louvain_weight)  # Aggiunge un solo arco non direzionato
+        filtered_G.add_edge(u, v, weight=louvain_weight)  # Add a single undirected edge
         edges_retained += 1
 
     print(
@@ -453,28 +448,27 @@ def filter_graph_by_weight(
     return filtered_G
 
 
-def calculate_and_print_centralities(graph: nx.Graph, metric: str):
+def calculate_and_print_centralities(graph: nx.Graph, metric: str) -> Dict[str, Dict[str, float]]:
     """
-    Calculates and prints various centrality measures for a given UNDIRECTED graph
-    and a specific metric. This graph is assumed to be ALREADY FILTERED and
-    have 'weight' attributes suitable for Louvain (representing similarity).
+    Calculates and prints various centrality measures for a given UNDIRECTED graph.
+    This graph is assumed to be ALREADY FILTERED and its edges possess a 'weight'
+    attribute, which signifies similarity (e.g., 1 - normalized_absolute_difference).
 
     Args:
-        graph (nx.Graph): The networkx UNDIRECTED graph to analyze. This graph
-                            should already be filtered and have a 'weight' attribute
-                            on its edges, where 'weight' signifies similarity (e.g., 1 - diff_norm_abs).
-        metric (str): The base name of the metric to use for centrality calculations
+        graph (nx.Graph): The NetworkX undirected graph to analyze.
+                          Edges are expected to have a 'weight' attribute.
+        metric (str): The base name of the metric used for graph construction and analysis
                       (e.g., 'goals', 'aggressiveness', 'shot_accuracy', 'control', 'points').
-                      This metric is used primarily for logging and selecting the
-                      appropriate weight attribute if multiple existed, though in this setup,
-                      'weight' from the filter_graph_by_weight function is the primary one.
+                      This parameter is primarily used for logging and contextualizing the output.
 
     Returns:
-        dict: A dictionary containing all calculated centrality measures.
+        Dict[str, Dict[str, float]]: A dictionary containing the calculated centrality measures.
+                                     Keys are centrality types (e.g., 'degree', 'strength'),
+                                     and values are dictionaries mapping node names to their centrality scores.
     """
     centrality_scores = {}
 
-    print(f"\n--- Calculating Centrality Measures for metric: {metric}")
+    print(f"\n--- Calculating Centrality Measures for metric: {metric} ---")
 
     if graph.number_of_nodes() == 0:
         print(f"Warning: Input graph for metric '{metric}' is empty. Skipping centrality calculations.")
@@ -486,57 +480,50 @@ def calculate_and_print_centralities(graph: nx.Graph, metric: str):
             'eigenvector': {}
         }
 
-    # Per il grafo non direzionato, il peso per 'strength' è l'attributo 'weight'
-    # che è già stato calcolato in filter_graph_by_weight per Louvain (1 - diff_norm_abs)
-    weight_attr_for_strength = 'weight'
+    # For an undirected graph, 'strength' is the sum of incident edge weights.
+    # The 'weight' attribute is assumed to be set by filter_graph_by_weight, representing similarity.
+    weight_attribute_name = 'weight'
 
-    # Controlla se il grafo è connesso per betweenness e closeness
-    # Per un grafo non direzionato, usiamo direttamente is_connected
+    # Check graph connectivity for path-based centralities (Betweenness and Closeness)
     if not nx.is_connected(graph):
         print(f"Warning: Graph for metric '{metric}' is not connected. "
               f"Betweenness and Closeness Centrality may be 0 for some nodes "
               f"or may represent only local paths.")
         print(f"Number of connected components: {nx.number_connected_components(graph)}")
 
-    # 1. Degree Centrality (non pesata)
-    # È la semplice count del numero di vicini
+    # 1. Degree Centrality (unweighted)
+    # This measures the number of connections a node has.
     centrality_scores['degree'] = nx.degree_centrality(graph)
 
-    # 2. Strength Centrality (pesata)
-    # È la somma dei pesi degli archi incidenti. Usiamo l'attributo 'weight'.
-    # get(weight_attr_for_strength, 0) è una safety net nel caso strano un arco non avesse il peso
-    centrality_scores['strength'] = dict(graph.degree(weight=weight_attr_for_strength))
+    # 2. Strength Centrality (weighted)
+    # This measures the sum of the weights of edges incident to a node.
+    centrality_scores['strength'] = dict(graph.degree(weight=weight_attribute_name))
 
-    # --- Preparazione per Betweenness e Closeness (richiedono pesi come distanze) ---
-    # Converti la "somiglianza" (weight) in una "distanza" (costo del percorso).
-    # Valori di somiglianza più alti (che è il nostro 'weight') dovrebbero corrispondere a distanze più piccole.
-    # Il 'weight' è già 1 - diff_norm_abs, quindi è già una misura di somiglianza.
-    # Per trasformarlo in distanza:
-    # Se weight = 1 (massima somiglianza), distanza = 0.000000001 (molto piccola).
-    # Se weight = 0 (minima somiglianza), distanza = 1.0 (molto grande).
-    # Quindi, possiamo usare 1 - weight + epsilon per la distanza.
-    # O, dato che il nostro 'weight' è già '1 - differenza', la 'differenza' stessa è una distanza.
-    # Ma il 'weight' è tra 0 e 1. Quindi, possiamo semplicemente usare `1 - weight` come distanza,
-    # con un piccolo epsilon per evitare 0 come distanza se la somiglianza è 1.
+    # --- Preparation for Betweenness and Closeness Centrality ---
+    # These centralities are based on shortest paths, thus requiring edge weights to represent 'distance' or 'cost'.
+    # Since our 'weight' attribute represents 'similarity' (higher weight = more similar/stronger connection),
+    # we need to transform it into a 'distance' (lower distance = stronger connection).
+    # A common transformation is (1 - similarity_weight) + epsilon.
     temp_graph_for_paths = graph.copy()
-    epsilon = 1e-9  # Per evitare problemi con log(0) o distanze 0 che possono creare problemi di divisione
+    epsilon = 1e-9  # A small constant to avoid zero distances, which can cause issues in path algorithms.
 
-    # Il nostro 'weight' è 1 - diff_norm_abs.
-    # Quindi, la 'differenza' è (1 - weight).
-    # Usiamo (1 - weight) + epsilon come 'distance_weight'.
+    # The 'weight' attribute is 1 - normalized_absolute_difference.
+    # Therefore, (1 - 'weight') effectively gives us the normalized absolute difference.
+    # Adding epsilon ensures distances are always positive.
     path_weight_attribute_name = 'distance_weight'
 
     for u, v, data in temp_graph_for_paths.edges(data=True):
-        original_similarity_weight = data.get('weight', 0.0)  # Il 'weight' è la nostra somiglianza [0,1]
+        original_similarity_weight = data.get('weight', 0.0)  # Retrieve the similarity weight [0,1]
 
-        # Trasformiamo la somiglianza in distanza: più alta la somiglianza, minore la distanza.
-        # Se somiglianza è 1, distanza è epsilon.
-        # Se somiglianza è 0, distanza è 1 + epsilon.
+        # Transform similarity into distance: higher similarity -> lower distance.
+        # If similarity is 1, distance is epsilon.
+        # If similarity is 0, distance is 1 + epsilon.
         distance_val = (1 - original_similarity_weight) + epsilon
         temp_graph_for_paths[u][v][path_weight_attribute_name] = distance_val
 
     # 3. Betweenness Centrality
-    # `weight` è il parametro per gli algoritmi di shortest path in NetworkX
+    # Measures the extent to which a node lies on shortest paths between other nodes.
+    # The 'weight' parameter for NetworkX shortest path algorithms refers to the 'distance' attribute.
     if any(data.get(path_weight_attribute_name, float('inf')) < float('inf')
            for u, v, data in temp_graph_for_paths.edges(data=True)):
         centrality_scores['betweenness'] = nx.betweenness_centrality(temp_graph_for_paths,
@@ -546,6 +533,7 @@ def calculate_and_print_centralities(graph: nx.Graph, metric: str):
         centrality_scores['betweenness'] = {node: 0.0 for node in graph.nodes()}
 
         # 4. Closeness Centrality
+    # Measures how close a node is to all other nodes in the network (inverse of average shortest path distance).
     if any(data.get(path_weight_attribute_name, float('inf')) < float('inf')
            for u, v, data in temp_graph_for_paths.edges(data=True)):
         centrality_scores['closeness'] = nx.closeness_centrality(temp_graph_for_paths,
@@ -555,10 +543,12 @@ def calculate_and_print_centralities(graph: nx.Graph, metric: str):
         centrality_scores['closeness'] = {node: 0.0 for node in graph.nodes()}
 
         # 5. Eigenvector Centrality
+    # Measures a node's influence based on the influence of its neighbors.
     try:
-        # Per Eigenvector, usa l'attributo 'weight' (somiglianza) come peso.
-        # Se non esiste, NetworkX userà un grafo non pesato (equivalente a pesi unitari).
-        centrality_scores['eigenvector'] = nx.eigenvector_centrality(graph, weight='weight', max_iter=1000, tol=1e-06)
+        # For Eigenvector centrality, the 'weight' attribute (similarity) is used directly.
+        # If 'weight' does not exist, NetworkX defaults to unweighted (equivalent to unit weights).
+        centrality_scores['eigenvector'] = nx.eigenvector_centrality(graph, weight=weight_attribute_name, max_iter=1000,
+                                                                     tol=1e-06)
     except nx.PowerIterationFailedConvergence:
         print(
             f"Warning: Eigenvector centrality did not converge for metric {metric}. This can happen in disconnected graphs or specific weight distributions. Setting scores to 0.0.")
@@ -567,8 +557,8 @@ def calculate_and_print_centralities(graph: nx.Graph, metric: str):
         print(f"Error calculating eigenvector centrality for metric {metric}: {e}. Setting scores to 0.0.")
         centrality_scores['eigenvector'] = {node: 0.0 for node in graph.nodes()}
 
-        # --- Stampa dei risultati delle centralità ---
-    print(f"\n--- Centrality Measures for metric: {metric} (based on 'weight' attribute) ---")
+        # --- Print Centrality Results ---
+    print(f"\n--- Centrality Measures for metric: {metric} (based on '{weight_attribute_name}' attribute) ---")
 
     if not centrality_scores['degree'] or all(v == 0.0 for v in centrality_scores['degree'].values()):
         print(f"No meaningful centrality results to display for '{metric}' (all values are zero or empty).")
@@ -597,22 +587,24 @@ def calculate_and_print_centralities(graph: nx.Graph, metric: str):
     return centrality_scores
 
 
-def find_communities(graph: nx.Graph, resolution: float = 1.0, weight_key: str = 'weight') -> dict:
+def find_communities(graph: nx.Graph, resolution: float = 1.0, weight_key: str = 'weight') -> Optional[Dict[str, int]]:
     """
-    Finds communities in an undirected graph using the Louvain algorithm.
+    Identifies communities within an undirected graph using the Louvain algorithm.
 
     Args:
-        graph (nx.Graph): The undirected graph (output from filter_graph_by_weight)
-                          with edge weights.
-        resolution (float): A parameter for the Louvain algorithm. Higher values lead to
-                            more, smaller communities. Lower values lead to fewer, larger communities.
-                            Default is 1.0.
-        weight_key (str): The name of the edge attribute that holds the weight
-                          (default is 'weight' as set by filter_graph_by_weight).
+        graph (nx.Graph): The undirected graph (typically an output from filter_graph_by_weight)
+                          with edge weights. Edges are expected to have a 'weight' attribute
+                          representing similarity, where higher values indicate stronger connections.
+        resolution (float): A resolution parameter for the Louvain algorithm.
+                            Higher values tend to yield a greater number of smaller communities.
+                            Lower values tend to result in fewer, larger communities.
+                            The default value is 1.0.
+        weight_key (str): The name of the edge attribute that stores the weight used by Louvain.
+                          The default value is 'weight', consistent with the output of filter_graph_by_weight.
 
     Returns:
-        dict: A dictionary mapping node (team) names to their community ID.
-              Returns None if no communities are found or graph is empty.
+        Optional[Dict[str, int]]: A dictionary mapping node (team) names to their assigned community ID.
+                                  Returns None if the input graph is empty or if no communities are found.
     """
     if not graph or graph.number_of_nodes() == 0:
         print("Input graph is empty for community detection.")
@@ -620,71 +612,99 @@ def find_communities(graph: nx.Graph, resolution: float = 1.0, weight_key: str =
 
     if graph.number_of_edges() == 0:
         print("No edges in the graph. Cannot detect communities.")
-        # If there are no edges, each node is its own community
+        # If there are no edges, each node is considered its own community.
+        # This returns a partition where each node has a unique community ID.
         return {node: i for i, node in enumerate(graph.nodes())}
 
     print(f"Detecting communities using Louvain algorithm (resolution={resolution})...")
 
-    # Ensure all weights are positive for Louvain, which they should be with _norm_abs
-    # If using other weights, ensure they are appropriate.
-    partition = co.best_partition(graph, resolution=resolution, weight=weight_key)
+    try:
+        # The Louvain algorithm (best_partition) maximizes modularity, where higher weights
+        # indicate stronger connections. The 'weight_key' ensures the correct attribute is used.
+        partition = co.best_partition(graph, resolution=resolution, weight=weight_key)
 
-    num_communities = len(set(partition.values()))
-    print(f"Found {num_communities} communities.")
+        # Check if communities were actually found (e.g., not all nodes in one community)
+        if len(set(partition.values())) <= 1:
+            print("No significant communities found (all nodes in one community or no clear separation).")
+            return None
 
-    return partition
+        return partition
+    except Exception as e:
+        print(f"Error during community detection: {e}.")
+        return None
 
 
-def analyze_centrality_vs_points(centrality_data: dict, team_points: dict, graph_nodes: list):
+def analyze_centrality_vs_points(centrality_data: Dict[str, Dict[str, float]], team_points: Dict[str, int], graph_nodes: List[str]):
     """
-    Performs and prints Pearson correlation between centrality measures and league points.
+    Performs and presents the Pearson correlation analysis between various network centrality measures
+    and team league points.
 
     Args:
-        centrality_data (dict): Dictionary of centrality scores (e.g., from calculate_centralities).
-        team_points (dict): Dictionary of team points (e.g., from calculate_team_points).
-        graph_nodes (list): A list of nodes (team names) present in the graph.
+        centrality_data (Dict[str, Dict[str, float]]): A dictionary containing centrality scores for each
+                                                        centrality type. Outer keys are centrality names
+                                                        (e.g., 'degree', 'strength'), and inner dictionaries
+                                                        map team names to their respective centrality scores.
+                                                        Typically sourced from `calculate_and_print_centralities`.
+        team_points (Dict[str, int]): A dictionary mapping team names to their accumulated league points.
+                                      Typically sourced from `calculate_team_points`.
+        graph_nodes (List[str]): A list of node (team) names that were present in the graph
+                                 for which centrality measures were calculated. This ensures
+                                 alignment of data points.
     """
     if not centrality_data or not team_points or not graph_nodes:
-        print("\nCannot perform correlation analysis: Missing centrality data, team points, or graph nodes.")
+        print("\nCorrelation analysis cannot be performed: Essential data (centrality scores, team points, "
+              "or graph nodes) is missing or empty.")
         return
 
-    # Align teams and data: Only include teams present in both centrality and points data,
-    # and also ensure they were part of the active graph nodes considered.
+    # Align teams and data: Only include teams that are present in the list of graph nodes
+    # and have valid data in both the centrality dictionary and the team points dictionary.
     teams_for_correlation = [
         team for team in graph_nodes
-        if team in team_points and all(team in c for c in centrality_data.values())
+        if team in team_points and all(team in c_scores for c_scores in centrality_data.values())
     ]
 
     if not teams_for_correlation:
-        print("No common teams with valid centrality and points data for correlation analysis.")
+        print("No common teams with valid centrality and points data found for correlation analysis. Skipping "
+              "correlation.")
         return
 
+    # Extract league points for the aligned teams
     points = [team_points.get(team, 0) for team in teams_for_correlation]
 
-    # Prepare DataFrame for correlation
-    results_df_data = {'Team': teams_for_correlation, 'Points': points}
+    # Prepare a Pandas DataFrame for correlation computation
+    results_df_data: Dict[str, List[Any]] = {'Team': teams_for_correlation, 'Points': points}
     for c_type, c_values in centrality_data.items():
-        results_df_data[c_type] = [c_values.get(team, 0) for team in teams_for_correlation]
+        results_df_data[c_type] = [c_values.get(team, 0.0) for team in teams_for_correlation] # Ensure default is
+        # float for scores
 
     results_df = pd.DataFrame(results_df_data)
 
     print(f"\nPearson Correlation between Centrality Measures and League Points:")
+    # Iterate through each centrality type and calculate its correlation with league points
     for centrality_type in centrality_data.keys():
-        if len(results_df[centrality_type].unique()) > 1: # Check for variance
+        # Correlation can only be calculated if there is variance in the centrality values
+        if len(results_df[centrality_type].unique()) > 1:
             correlation = results_df['Points'].corr(results_df[centrality_type])
             print(f"  {centrality_type} Centrality vs. Points: {correlation:.4f}")
         else:
-            print(f"  {centrality_type} Centrality vs. Points: Cannot calculate (no variance in centrality values)")
+            print(f"  {centrality_type} Centrality vs. Points: Cannot calculate (insufficient variance in centrality "
+                  f"values)")
 
 
 def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_description: str):
     """
-    Creates separate scatter plots (one per metric) showing the relationship between specified normalized metrics
-    and normalized total points. Uses a categorical palette for team colors. Each plot will be a separate figure.
+    Generates individual scatter plots to visualize the relationship between specified normalized metrics
+    and normalized total league points. Each plot is presented as a separate figure.
+    Teams are differentiated by color using a categorical palette.
 
     Args:
-        normalized_ratios_df (pd.DataFrame): DataFrame resulting from calculate_and_normalize_ratios.
-        scope_description (str): A string describing the analysis scope (e.g., "Season 2016/17" or "Seasons 2014-2017").
+        normalized_ratios_df (pd.DataFrame): A DataFrame containing normalized metric ratios and
+                                             normalized points, typically derived from
+                                             `calculate_and_normalize_ratios` and joined with normalized points.
+                                             Expected columns include 'Team', 'points_norm',
+                                             and various normalized metric columns (e.g., 'goals_scored_norm').
+        scope_description (str): A descriptive string indicating the scope of the analysis
+                                 (e.g., "Season 2016/17" or "Seasons 2014-2017").
     """
     if normalized_ratios_df is None or normalized_ratios_df.empty:
         print("\nCannot plot metric ratios vs. points: Input DataFrame is None or empty.")
@@ -699,29 +719,30 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
         'control_norm': 'Normalized Control'
     }
 
-    # Determinare il numero di squadre per scegliere una palette adatta
+    # Determine the number of unique teams to select an appropriate palette size
     num_teams = len(normalized_ratios_df.index.unique())
 
+    # A custom palette designed to accommodate up to 46 distinct teams
     custom_palette_46 = [
-    '#E60000', '#009900', '#0000CC', '#FFD700', '#8A2BE2', '#FFA500', '#008B8B', '#FF69B4', '#20B2AA', '#A52A2A',
-    '#7FFF00', '#DAA520', '#C0C0C0', '#4682B4', '#D2691E', '#800000', '#00FF7F', '#800080', '#DDA0DD', '#F0E68C',
-    '#1E90FF', '#FF4500', '#8B0000', '#2F4F4F', '#D8BFD8', '#BA55D3', '#B0C4DE', '#FAEBD7', '#7CFC00', '#FF00FF',
-    '#BDB76B', '#ADFF2F', '#A0522D', '#CD853F', '#6B8E23', '#483D8B', '#FFEFD5', '#FFF0F5', '#F5DEB3', '#D2B48C',
-    '#BC8F8F', '#A9A9A9', '#B8860B', '#3CB371', '#C71585', '#00BFFF'
+        '#E60000', '#009900', '#0000CC', '#FFD700', '#8A2BE2', '#FFA500', '#008B8B', '#FF69B4', '#20B2AA', '#A52A2A',
+        '#7FFF00', '#DAA520', '#C0C0C0', '#4682B4', '#D2691E', '#800000', '#00FF7F', '#800080', '#DDA0DD', '#F0E68C',
+        '#1E90FF', '#FF4500', '#8B0000', '#2F4F4F', '#D8BFD8', '#BA55D3', '#B0C4DE', '#FAEBD7', '#7CFC00', '#FF00FF',
+        '#BDB76B', '#ADFF2F', '#A0522D', '#CD853F', '#6B8E23', '#483D8B', '#FFEFD5', '#FFF0F5', '#F5DEB3', '#D2B48C',
+        '#BC8F8F', '#A9A9A9', '#B8860B', '#3CB371', '#C71585', '#00BFFF'
     ]
 
-    # Prepara il DataFrame con l'indice resettato una sola volta per efficienza
+    # Prepare the DataFrame by resetting its index once for plotting efficiency
     plot_data = normalized_ratios_df.reset_index()
 
     for i, (metric_col, title_suffix) in enumerate(metrics_to_plot.items()):
-        # Crea una NUOVA figura e un NUOVO set di assi per ogni grafico
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8)) # Dimensioni adatte per un singolo plot
+        # Create a NEW figure and a NEW set of axes for each individual plot
+        fig, ax = plt.subplots(1, 1, figsize=(10, 8))  # Set appropriate dimensions for a single plot
 
-        # Titolo specifico per ogni plot
+        # Set a specific title for each plot
         ax.set_title(f'{title_suffix} vs. Normalized League Points ({scope_description})', fontsize=14)
 
         sns.scatterplot(
-            data=plot_data, # Usa il DataFrame con l'indice resettato
+            data=plot_data,  # Use the DataFrame with the reset index
             x=metric_col,
             y='points_norm',
             hue='Team',
@@ -732,31 +753,32 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
             legend='full'
         )
 
-        # Regola la posizione della legenda
+        # Adjust the legend position based on the number of teams
         if num_teams > 10:
-            ax.legend(title='Team', bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0., fontsize='small', ncol=1)
+            ax.legend(title='Team', bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0., fontsize='small',
+                      ncol=1)
         else:
             ax.legend(title='Team', loc='best', fontsize='small')
 
-        # Aggiungi la linea di regressione
+        # Add a linear regression line to show general trend
         sns.regplot(
-            data=plot_data, # Usa il DataFrame con l'indice resettato
+            data=plot_data,  # Use the DataFrame with the reset index
             x=metric_col,
             y='points_norm',
             scatter=False,
             color='gray',
-            line_kws={'linestyle':'--', 'alpha':0.7},
+            line_kws={'linestyle': '--', 'alpha': 0.7},
             ax=ax
         )
 
         ax.set_xlabel(title_suffix)
         ax.set_ylabel('Normalized Points')
 
-        # Aggiungi la correlazione Pearson
+        # Annotate the plot with the Pearson correlation coefficient
         correlation = normalized_ratios_df[metric_col].corr(normalized_ratios_df['points_norm'])
         ax.text(0.05, 0.95, f'Pearson Correlation: {correlation:.2f}',
                 transform=ax.transAxes, fontsize=10,
                 verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.5))
 
-        plt.tight_layout() # Adatta il layout per questa singola figura
-        plt.show() # Mostra questa singola figura
+        plt.tight_layout()  # Adjust the layout for this single figure
+        plt.show()
