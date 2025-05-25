@@ -7,7 +7,8 @@ import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
 
-from src.data_utils import normalize_val, normalize_diff_symmetric
+from src.data_utils import normalize_val, normalize_diff_symmetric, calculate_and_normalize_ratios, \
+    calculate_team_points
 
 
 def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_year: Optional[int] = None,
@@ -782,3 +783,82 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
 
         plt.tight_layout()  # Adjust the layout for this single figure
         plt.show()
+
+
+def plot_epl_analysis_results(
+        epl_df: pd.DataFrame,  # Original dataframe
+        analysis_season: Optional[str] = None,
+        network_start_year: Optional[int] = None,
+        network_end_year: Optional[int] = None
+) -> None:
+    """
+    Generates scatter plots showing normalized metric ratios against normalized total points
+    for teams within a specified analysis scope (single season or range of seasons).
+    This function processes the input DataFrame to select the correct scope and then
+    calls plot_metric_ratios_vs_points to create the visualizations.
+
+    Args:
+        epl_df (pd.DataFrame): The main DataFrame containing EPL match data.
+        analysis_season (Optional[str]): A specific season to analyze (e.g., "2016/2017").
+                                         If provided, `network_start_year` and `network_end_year` are ignored.
+        network_start_year (Optional[int]): The starting year of the season range.
+                                            (e.g., 2015 for 2015/2016 season).
+        network_end_year (Optional[int]): The ending year for the season range.
+                                          If set to Y, the last season included will be (Y-1)/Y.
+                                          (e.g., 2020 means up to 2019/2020 season).
+    """
+    print("\n--- Generating Metric Ratios vs. Normalized Points Plots ---")
+
+    df_for_scope = epl_df.copy()
+    scope_description = "the entire dataset"
+
+    # Replicate the scope determination logic from perform_epl_network_analysis
+    if network_start_year is not None and network_end_year is not None:
+        seasons_in_range = []
+        for year in range(network_start_year, network_end_year):
+            next_year_suffix = str(year + 1)[-2:]
+            seasons_in_range.append(f"{year}/{next_year_suffix}")
+
+        df_for_scope = epl_df[epl_df['Season'].isin(seasons_in_range)].copy()
+        scope_description = f"seasons from {network_start_year}/{str(network_start_year + 1)[-2:]} to {network_end_year - 1}/{str(network_end_year)[-2:]}"
+
+    elif analysis_season:
+        df_for_scope = epl_df[epl_df['Season'] == analysis_season].copy()
+        scope_description = f"season {analysis_season}"
+
+    if df_for_scope.empty:
+        print("Skipping Metric Ratios vs. Points plot: Input DataFrame for scope is empty.")
+        return
+
+    normalized_ratios_df = calculate_and_normalize_ratios(df_for_scope)
+    league_points = calculate_team_points(df_for_scope)  # Recalculate points for this scope
+
+    if normalized_ratios_df is None or normalized_ratios_df.empty:
+        print("Skipping Metric Ratios vs. Points plot: Issues in calculating or normalizing ratios.")
+        return
+
+    if not league_points:
+        print("Skipping Metric Ratios vs. Points plot: League points data is missing or empty for this scope.")
+        return
+
+    league_points_for_plot = pd.DataFrame(list(league_points.items()), columns=['Team', 'Points']).set_index('Team')
+
+    # Normalize points for plotting
+    min_points = league_points_for_plot['Points'].min()
+    max_points = league_points_for_plot['Points'].max()
+    if max_points == min_points:
+        league_points_for_plot['Normalized_Points'] = 0.5
+    else:
+        league_points_for_plot['Normalized_Points'] = (league_points_for_plot['Points'] - min_points) / (
+                    max_points - min_points)
+
+    # Join normalized ratios with normalized points. Use 'inner' to ensure only common teams are plotted.
+    plot_df = normalized_ratios_df.join(league_points_for_plot[['Normalized_Points']], how='inner', lsuffix='_ratio')
+
+    if plot_df.empty:
+        print("Skipping Metric Ratios vs. Points plot: No common data for plotting after joining ratios and points.")
+        return
+
+    # Call the existing plot_metric_ratios_vs_points function from graph_utils
+    plot_metric_ratios_vs_points(plot_df, scope_description)
+    print("Metric Ratios vs. Normalized Points Plots generated successfully.")
