@@ -1,13 +1,12 @@
 from collections import defaultdict
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Any
 
 import networkx as nx
 import pandas as pd
 
-# Assuming these are correctly imported from your project structure
 from src.data_utils import calculate_team_points
-from src.graph_utils import find_communities, analyze_centrality_vs_points, plot_network_communities, \
-    calculate_and_print_centralities, filter_graph_by_weight, create_epl_network
+from src.graph_utils import find_communities, analyze_centrality_vs_points, calculate_and_print_centralities, \
+    filter_graph_by_weight, create_epl_network
 
 
 def perform_epl_network_analysis(
@@ -52,7 +51,8 @@ def perform_epl_network_analysis(
 
     Returns:
         Dict[str, Any]: A dictionary containing all analysis results. Keys include:
-                        - 'network_metrics_results': Dict[str, Dict[str, Any]] (detailed per-metric network results, including graph and communities for plotting)
+                        - 'network_metrics_results': Dict[str, Dict[str, Any]] (detailed per-metric network results,
+                            including graph and communities for plotting)
                         - 'df_for_scope': pd.DataFrame (the original dataframe sliced by scope)
                         - 'scope_description': str
                         - 'league_points': Dict[str, int]
@@ -168,7 +168,8 @@ def perform_epl_network_analysis(
                 print("No communities found in the filtered graph for this metric.")
         else:
             print(
-                f"Skipping Community Detection for '{metric_base_name}' due to no edges after filtering or an empty graph.")
+                f"Skipping Community Detection for '{metric_base_name}' due to no edges after filtering or an empty "
+                f"graph.")
 
         # Store all relevant data for the current metric's network analysis
         network_metrics_results[metric_base_name] = {
