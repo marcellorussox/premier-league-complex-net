@@ -23,6 +23,12 @@ The Premier League isn't just about goals and points; it's a complex web of inte
 
 This study reveals fascinating patterns when analyzing the EPL through a network lens, both in specific seasons and over a decade:
 
+* **Long-Term Trends (2008/09 - 2017/18):** Over a decade, the "Big Six" tend to cluster more in terms of **control similarity**, indicating that consistent offensive pressure and ball dominance are defining characteristics of long-term strength. Intriguingly, while similarity in goals and control often correlates negatively with points (meaning true dominance comes from creating *differences*), being consistently "similar" in **aggressiveness** (i.e., balanced, pragmatic aggression) surprisingly correlates *positively* with long-term success. This implies that successful teams maintain a strategic, consistent level of aggression that allows for competitive matches without excessive fouls or cards. The long-term 'control' communities demonstrate this clearer grouping:
+    ![2008-18 Control Communities](plots/2008_18_control_com.png)
+
+    Overall correlations between network metrics and league points across seasons also highlight these trends:
+    ![Metrics vs. Points Correlations](plots/metrics_points.png)
+
 * **Fragmented Dominance (2014/15 & 2015/16):** Despite the "Big Six" clubs often topping the league, they rarely form a single, cohesive community in the similarity networks for goals, aggressiveness, or control. This suggests their dominance isn't based on identical playing styles, but rather diverse approaches.
 
     For instance, in the 2014/15 season, top teams were dispersed even in 'goals' similarity networks, indicating varied scoring profiles:
@@ -30,12 +36,6 @@ This study reveals fascinating patterns when analyzing the EPL through a network
 
 * **Leicester's Anomaly (2015/16):** Leicester City's title win was unique. While they didn't consistently show high centralities across all metrics in the network, their success highlighted how being "similar" in aggression could suddenly correlate positively with league points, suggesting a shift in what constituted a winning tactical approach that season. Their distinct 'control' profile is evident:
     ![2015-16 Control Communities](plots/2015_16_control_com.png)
-
-* **Long-Term Trends (2008/09 - 2017/18):** Over a decade, the "Big Six" tend to cluster more in terms of **control similarity**, indicating that consistent offensive pressure and ball dominance are defining characteristics of long-term strength. Intriguingly, while similarity in goals and control often correlates negatively with points (meaning true dominance comes from creating *differences*), being consistently "similar" in **aggressiveness** (i.e., balanced, pragmatic aggression) surprisingly correlates *positively* with long-term success. This implies that successful teams maintain a strategic, consistent level of aggression that allows for competitive matches without excessive fouls or cards. The long-term 'control' communities demonstrate this clearer grouping:
-    ![2008-18 Control Communities](plots/2008_18_control_com.png)
-
-    Overall correlations between network metrics and league points across seasons also highlight these trends:
-    ![Metrics vs. Points Correlations](plots/metrics_points.png)
 
 * **Persistent Patterns:** Mid-to-lower table teams often exhibit high centralities in 'goals' and 'control' networks, indicating their frequent involvement in tightly contested matches in these areas, but this generally doesn't translate to higher league standing.
 
