@@ -786,45 +786,27 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
 
 
 def plot_epl_analysis_results(
-        epl_df: pd.DataFrame,  # Original dataframe
-        analysis_season: Optional[str] = None,
-        network_start_year: Optional[int] = None,
-        network_end_year: Optional[int] = None
+        epl_df: pd.DataFrame,
+        scope_description: str
 ) -> None:
     """
-    Generates scatter plots showing normalized metric ratios against normalized total points
-    for teams within a specified analysis scope (single season or range of seasons).
-    This function processes the input DataFrame to select the correct scope and then
-    calls plot_metric_ratios_vs_points to create the visualizations.
+    Generates scatter plots showing normalized team metric ratios (e.g., goals, aggressiveness)
+    against normalized total points for a specified analysis scope (single season or range of seasons).
+
+    This function expects the input DataFrame 'epl_df' to already be filtered to the desired
+    analysis scope (e.g., a specific season or range of seasons). It then calculates and normalizes
+    the relevant metric ratios and team points within this scope, finally calling
+    'plot_metric_ratios_vs_points' to create the visualizations.
 
     Args:
-        epl_df (pd.DataFrame): The main DataFrame containing EPL match data.
-        analysis_season (Optional[str]): A specific season to analyze (e.g., "2016/2017").
-                                         If provided, `network_start_year` and `network_end_year` are ignored.
-        network_start_year (Optional[int]): The starting year of the season range.
-                                            (e.g., 2015 for 2015/2016 season).
-        network_end_year (Optional[int]): The ending year for the season range.
-                                          If set to Y, the last season included will be (Y-1)/Y.
-                                          (e.g., 2020 means up to 2019/2020 season).
+        epl_df (pd.DataFrame): The DataFrame containing EPL match data, already filtered
+                               to the specific season(s) or range being analyzed.
+        scope_description (str): A string describing the analysis scope (e.g., "season 2016/17"
+                                 or "seasons from 2012/13 to 2017/18"). This is used for plot titles.
     """
     print("\n--- Generating Metric Ratios vs. Normalized Points Plots ---")
 
     df_for_scope = epl_df.copy()
-    scope_description = "the entire dataset"
-
-    # Replicate the scope determination logic from perform_epl_network_analysis
-    if network_start_year is not None and network_end_year is not None:
-        seasons_in_range = []
-        for year in range(network_start_year, network_end_year):
-            next_year_suffix = str(year + 1)[-2:]
-            seasons_in_range.append(f"{year}/{next_year_suffix}")
-
-        df_for_scope = epl_df[epl_df['Season'].isin(seasons_in_range)].copy()
-        scope_description = f"seasons from {network_start_year}/{str(network_start_year + 1)[-2:]} to {network_end_year - 1}/{str(network_end_year)[-2:]}"
-
-    elif analysis_season:
-        df_for_scope = epl_df[epl_df['Season'] == analysis_season].copy()
-        scope_description = f"season {analysis_season}"
 
     if df_for_scope.empty:
         print("Skipping Metric Ratios vs. Points plot: Input DataFrame for scope is empty.")
