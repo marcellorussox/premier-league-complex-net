@@ -6,7 +6,7 @@ import pandas as pd
 
 # Assuming these are correctly imported from your project structure
 from src.data_utils import calculate_team_points
-from src.graph_utils import find_communities, analyze_centrality_vs_points, \
+from src.graph_utils import find_communities, analyze_centrality_vs_points, plot_network_communities, \
     calculate_and_print_centralities, filter_graph_by_weight, create_epl_network
 
 
@@ -176,6 +176,8 @@ def perform_epl_network_analysis(
                 for comm_id in sorted(communities_by_id.keys()):
                     teams = communities_by_id[comm_id]
                     print(f"  Community {comm_id}: {', '.join(teams)}")
+
+                plot_network_communities(analysis_graph_filtered, communities, metric_base_name, scope_description)
             else:
                 print("No communities found in the filtered graph for this metric.")
         else:

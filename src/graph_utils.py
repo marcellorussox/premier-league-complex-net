@@ -1,11 +1,16 @@
+import os
 from collections import defaultdict
 from typing import Optional, Dict, List, Any
+import numpy as np
 
 import community as co
 import networkx as nx
 import pandas as pd
 from matplotlib import pyplot as plt
 import seaborn as sns
+import matplotlib.patches as mpatches
+from PIL import Image
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
 from src.data_utils import normalize_val, normalize_diff_symmetric, calculate_and_normalize_ratios, \
     calculate_team_points
@@ -217,7 +222,7 @@ def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_yea
         min(all_goals_scored_by_source), max(all_goals_scored_by_source)) if all_goals_scored_by_source else (0, 0)
     min_agg_by_source, max_agg_by_source = (
         min(all_aggressiveness_by_source), max(all_aggressiveness_by_source)) if all_aggressiveness_by_source else (
-    0, 0)
+        0, 0)
     min_sa_by_source, max_sa_by_source = (
         min(all_shot_accuracy_by_source), max(all_shot_accuracy_by_source)) if all_shot_accuracy_by_source else (0, 0)
     min_ctrl_by_source, max_ctrl_by_source = (
@@ -635,7 +640,8 @@ def find_communities(graph: nx.Graph, resolution: float = 1.0, weight_key: str =
         return None
 
 
-def analyze_centrality_vs_points(centrality_data: Dict[str, Dict[str, float]], team_points: Dict[str, int], graph_nodes: List[str]):
+def analyze_centrality_vs_points(centrality_data: Dict[str, Dict[str, float]], team_points: Dict[str, int],
+                                 graph_nodes: List[str]):
     """
     Performs and presents the Pearson correlation analysis between various network centrality measures
     and team league points.
@@ -675,7 +681,7 @@ def analyze_centrality_vs_points(centrality_data: Dict[str, Dict[str, float]], t
     # Prepare a Pandas DataFrame for correlation computation
     results_df_data: Dict[str, List[Any]] = {'Team': teams_for_correlation, 'Points': points}
     for c_type, c_values in centrality_data.items():
-        results_df_data[c_type] = [c_values.get(team, 0.0) for team in teams_for_correlation] # Ensure default is
+        results_df_data[c_type] = [c_values.get(team, 0.0) for team in teams_for_correlation]  # Ensure default is
         # float for scores
 
     results_df = pd.DataFrame(results_df_data)
@@ -832,7 +838,7 @@ def plot_epl_analysis_results(
         league_points_for_plot['Normalized_Points'] = 0.5
     else:
         league_points_for_plot['Normalized_Points'] = (league_points_for_plot['Points'] - min_points) / (
-                    max_points - min_points)
+                max_points - min_points)
 
     # Join normalized ratios with normalized points. Use 'inner' to ensure only common teams are plotted.
     plot_df = normalized_ratios_df.join(league_points_for_plot[['Normalized_Points']], how='inner', lsuffix='_ratio')
@@ -844,3 +850,200 @@ def plot_epl_analysis_results(
     # Call the existing plot_metric_ratios_vs_points function from graph_utils
     plot_metric_ratios_vs_points(plot_df, scope_description)
     print("Metric Ratios vs. Normalized Points Plots generated successfully.")
+
+
+def _load_team_logos(team_names: List[str], logo_path: str, base_logo_pixel_dim: int = 200) -> Dict[str, Image.Image]:
+    """
+    Loads team logos from a specified folder, resizes them to a uniform base pixel dimension,
+    and ensures consistent transparency handling by converting to RGBA.
+    Returns PIL Image objects.
+
+    Args:
+        team_names (List[str]): List of team names in the graph.
+        logo_path (str): Path to the directory containing logo files.
+        base_logo_pixel_dim (int): The target side length in pixels for the base resized logos (e.g., 200x200).
+
+    Returns:
+        Dict[str, Image.Image]: A dictionary mapping team names to PIL Image objects,
+                                where all images are of uniform pixel size (base_logo_pixel_dim x base_logo_pixel_dim).
+    """
+    logos = {}
+    script_dir = os.path.dirname(__file__)
+    absolute_logo_folder_path = os.path.normpath(os.path.join(script_dir, '..', logo_path))
+
+    for team_name in team_names:
+        standardized_filename = team_name.lower().replace(" ", "_")
+        logo_file = os.path.join(absolute_logo_folder_path, f"{standardized_filename}.png")
+
+        if not os.path.exists(logo_file):
+            print(f"Logo not found for team: '{team_name}'. Expected file: '{logo_file}'. Skipping.")
+            continue
+
+        try:
+            # CHANGE THIS LINE BACK TO RGBA
+            img = Image.open(logo_file).convert("RGBA")
+
+            img_resized = img.resize((base_logo_pixel_dim, base_logo_pixel_dim), Image.LANCZOS)
+
+            logos[team_name] = img_resized
+        except Exception as e:
+            print(f"Error loading logo for {team_name} from {logo_file}: {e}")
+    return logos
+
+
+# Modified plot_network_communities function
+def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metric_name: str, scope_desc: str,
+                             logo_folder: str = 'data/epl_logos/',
+                             logo_display_zoom: float = 0.15,
+                             node_base_size: int = 1600):
+    """
+    Plots the network graph with nodes represented by colored circles and team logos inside them.
+    Nodes are colored and grouped by their detected community.
+
+    Args:
+        graph (nx.Graph): The NetworkX graph to visualize (undirected, filtered).
+        communities (Dict[str, int]): A dictionary mapping node names (team names) to their community ID.
+        metric_name (str): The name of the metric used for analysis (e.g., 'goals', 'aggressiveness').
+        scope_desc (str): A string describing the analysis scope (e.g., "season 2016/17").
+        logo_folder (str): Path to the directory containing team logo images.
+        logo_display_zoom (float): The zoom factor for the logos. This value scales the logo
+                                   relative to the data coordinates. Adjust this to make logos
+                                   fit within the nodes. Smaller value = smaller logo.
+        node_base_size (int): The base size for the colored circular nodes (in points^2).
+                              This should be large enough to contain the logos.
+    """
+    if not graph or graph.number_of_nodes() == 0:
+        print(f"Cannot plot empty graph for {metric_name}.")
+        return
+
+    plt.figure(figsize=(16, 14))
+    ax = plt.gca()
+    plt.title(f"Network Communities for {metric_name} ({scope_desc})", fontsize=18)
+
+    team_names_in_graph = list(graph.nodes())
+    loaded_logos = _load_team_logos(team_names_in_graph, logo_folder)
+
+    categorical_palette = [
+        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+        '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
+        '#c49c94', '#f7b6d2', '#c7c7c7', '#dbdb8d', '#9edae5'
+    ]
+
+    node_colors = []
+    unique_communities = sorted(list(set(communities.values())))
+    color_map = {comm_id: categorical_palette[i % len(categorical_palette)]
+                 for i, comm_id in enumerate(unique_communities)}
+    node_colors = [color_map.get(communities.get(node), 'lightgrey') for node in graph.nodes()]
+
+    pos = {}
+    num_nodes = graph.number_of_nodes()
+
+    if num_nodes == 1:
+        node = list(graph.nodes())[0]
+        pos[node] = np.array([0.0, 0.0])
+        print(f"Plotting a single node graph for {metric_name}.")
+    elif communities and len(unique_communities) > 1 and num_nodes > 1:
+        community_centroid_graph = nx.Graph()
+        community_centroid_graph.add_nodes_from(unique_communities)
+
+        for u, v in graph.edges():
+            comm_u = communities.get(u)
+            comm_v = communities.get(v)
+            if comm_u is not None and comm_v is not None and comm_u != comm_v:
+                community_centroid_graph.add_edge(comm_u, comm_v)
+
+        try:
+            centroid_pos = nx.spectral_layout(community_centroid_graph, weight=None)
+        except Exception:
+            print("Warning: Spectral layout for centroids failed, falling back to spring layout.")
+            centroid_pos = nx.spring_layout(community_centroid_graph, k=2.0, iterations=100, seed=42)
+
+        if not centroid_pos:
+             centroid_pos = {comm_id: np.random.rand(2) * 2 - 1 for comm_id in unique_communities}
+
+        initial_pos = {}
+        for node_name in graph.nodes():
+            comm_id = communities.get(node_name)
+            if comm_id is not None and comm_id in centroid_pos:
+                initial_pos[node_name] = centroid_pos[comm_id] + np.random.rand(2) * 0.03 - 0.015
+            else:
+                initial_pos[node_name] = np.random.rand(2) * 2 - 1
+
+        optimal_k = 0.5 / np.sqrt(num_nodes) if num_nodes > 0 else 0.15
+
+        try:
+            pos = nx.spring_layout(graph, pos=initial_pos, k=optimal_k, iterations=150, seed=42, weight='weight')
+        except Exception as e:
+            print(f"Error during spring layout refinement: {e}. Falling back to default spring layout.")
+            pos = nx.spring_layout(graph, k=0.15, iterations=50, seed=42)
+
+    else:
+        print("Less than 2 communities detected or 0 edges; using standard spring layout.")
+        optimal_k = 0.5 / np.sqrt(num_nodes) if num_nodes > 0 else 0.15
+        pos = nx.spring_layout(graph, k=optimal_k, iterations=100, seed=42, weight='weight')
+
+    # Draw the colored nodes (circles) first
+    nx.draw_networkx_nodes(graph, pos, node_color=node_colors, node_size=node_base_size,
+                           alpha=0.9, linewidths=1, edgecolors='black')
+
+    # Draw edges
+    nx.draw_networkx_edges(graph, pos, alpha=0.3, edge_color='gray')
+
+    # Add logos on top of the nodes
+    for node_name, p in pos.items():
+        if node_name in loaded_logos:
+            # --- IMPORTANT CHANGES HERE ---
+            img_offset = OffsetImage(loaded_logos[node_name],
+                                     zoom=logo_display_zoom,
+                                     origin='upper',          # Standard for images, might help consistency
+                                     interpolation='bilinear' # Good quality interpolation
+                                    )
+            ab = AnnotationBbox(img_offset, p,
+                                frameon=False,
+                                pad=0.0,
+                                boxcoords="data",
+                                xycoords="data"
+                               )
+            ax.add_artist(ab)
+        else:
+            ax.text(p[0], p[1], node_name, fontsize=8, ha='center', va='center', weight='bold',
+                    bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'))
+
+    # Adjust overall scaling of the plot area
+    if pos:
+        all_x = [p[0] for p in pos.values()]
+        all_y = [p[1] for p in pos.values()]
+
+        if all_x and all_y:
+            min_x, max_x = min(all_x), max(all_x)
+            min_y, max_y = min(all_y), max(all_y)
+
+            x_pad = (max_x - min_x) * 0.15 if num_nodes > 1 else 0.2
+            y_pad = (max_y - min_y) * 0.15 if num_nodes > 1 else 0.2
+
+            ax.set_xlim(min_x - x_pad, max_x + x_pad)
+            ax.set_ylim(min_y - y_pad, max_y + y_pad)
+        else:
+            ax.set_xlim(-1.0, 1.0)
+            ax.set_ylim(-1.0, 1.0)
+    else:
+        ax.set_xlim(-1.0, 1.0)
+        ax.set_ylim(-1.0, 1.0)
+
+    legend_handles = []
+    for comm_id in unique_communities:
+        label = f"Community {comm_id}"
+        handle = mpatches.Patch(color=color_map[comm_id], label=label)
+        legend_handles.append(handle)
+
+    if any(color == 'lightgrey' for color in [color_map.get(communities.get(node), 'lightgrey') for node in graph.nodes()]):
+        legend_handles.append(mpatches.Patch(color='lightgrey', label='Unassigned / No Logo'))
+
+    if legend_handles:
+        plt.legend(handles=legend_handles, title="Communities", loc='upper left', bbox_to_anchor=(1, 1),
+                   fontsize=10)
+
+    plt.tight_layout(rect=[0, 0, 0.88, 1])
+    plt.axis('off')
+    plt.show()
