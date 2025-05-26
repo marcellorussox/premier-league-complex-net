@@ -741,12 +741,20 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
     # Prepare the DataFrame by resetting its index once for plotting efficiency
     plot_data = normalized_ratios_df.reset_index()
 
+    # Set a base font size for all text elements
+    base_fontsize = 12
+    title_fontsize = base_fontsize + 2  # Slightly larger for titles
+    label_fontsize = base_fontsize + 2
+    tick_fontsize = base_fontsize
+    legend_fontsize = base_fontsize - 3.3
+    annotation_fontsize = base_fontsize
+
     for i, (metric_col, title_suffix) in enumerate(metrics_to_plot.items()):
         # Create a NEW figure and a NEW set of axes for each individual plot
         fig, ax = plt.subplots(1, 1, figsize=(10, 8))  # Set appropriate dimensions for a single plot
 
         # Set a specific title for each plot
-        ax.set_title(f'{title_suffix} vs. Normalized League Points ({scope_description})', fontsize=14)
+        ax.set_title(f'{title_suffix} vs. Normalized League Points ({scope_description})', fontsize=title_fontsize)
 
         sns.scatterplot(
             data=plot_data,  # Use the DataFrame with the reset index
@@ -762,10 +770,12 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
 
         # Adjust the legend position based on the number of teams
         if num_teams > 10:
-            ax.legend(title='Team', bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0., fontsize='small',
-                      ncol=1)
+            ax.legend(title='Team', bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0.,
+                      fontsize=legend_fontsize,
+                      ncol=1, title_fontsize=label_fontsize)  # Set title_fontsize for the legend title
         else:
-            ax.legend(title='Team', loc='best', fontsize='small')
+            ax.legend(title='Team', loc='best', fontsize=legend_fontsize,
+                      title_fontsize=label_fontsize)  # Set title_fontsize for the legend title
 
         # Add a linear regression line to show general trend
         sns.regplot(
@@ -778,17 +788,38 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
             ax=ax
         )
 
-        ax.set_xlabel(title_suffix)
-        ax.set_ylabel('Normalized Points')
+        ax.set_xlabel(title_suffix, fontsize=label_fontsize)
+        ax.set_ylabel('Normalized Points', fontsize=label_fontsize)
+
+        # Set tick label font size
+        ax.tick_params(axis='x', labelsize=tick_fontsize)
+        ax.tick_params(axis='y', labelsize=tick_fontsize)
 
         # Annotate the plot with the Pearson correlation coefficient
         correlation = normalized_ratios_df[metric_col].corr(normalized_ratios_df['points_norm'])
         ax.text(0.05, 0.95, f'Pearson Correlation: {correlation:.2f}',
-                transform=ax.transAxes, fontsize=10,
+                transform=ax.transAxes, fontsize=annotation_fontsize,
                 verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.5))
 
         plt.tight_layout()  # Adjust the layout for this single figure
         plt.show()
+
+
+# Example usage (assuming normalized_ratios_df and scope_description are defined)
+# This part is just for demonstration and not part of the requested modification.
+# if __name__ == '__main__':
+#     # Create a dummy DataFrame for demonstration
+#     data = {
+#         'Team': ['Team A', 'Team B', 'Team C', 'Team D', 'Team E', 'Team F', 'Team G', 'Team H', 'Team I', 'Team J'],
+#         'goals_scored_norm': [0.8, 0.6, 0.7, 0.5, 0.9, 0.4, 0.75, 0.65, 0.85, 0.55],
+#         'aggressiveness_committed_norm': [0.7, 0.8, 0.6, 0.9, 0.5, 0.85, 0.55, 0.75, 0.65, 0.95],
+#         'shot_accuracy_norm': [0.75, 0.65, 0.85, 0.55, 0.95, 0.45, 0.8, 0.7, 0.9, 0.6],
+#         'control_norm': [0.6, 0.7, 0.8, 0.9, 0.4, 0.75, 0.55, 0.85, 0.65, 0.95],
+#         'points_norm': [0.9, 0.7, 0.8, 0.6, 1.0, 0.5, 0.85, 0.75, 0.95, 0.65]
+#     }
+#     normalized_df = pd.DataFrame(data).set_index('Team')
+#     scope = "Test Season 2023/24"
+#     plot_metric_ratios_vs_points(normalized_df, scope)
 
 
 def plot_epl_analysis_results(
@@ -960,7 +991,7 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
             centroid_pos = nx.spring_layout(community_centroid_graph, k=2.0, iterations=100, seed=42)
 
         if not centroid_pos:
-             centroid_pos = {comm_id: np.random.rand(2) * 2 - 1 for comm_id in unique_communities}
+            centroid_pos = {comm_id: np.random.rand(2) * 2 - 1 for comm_id in unique_communities}
 
         initial_pos = {}
         for node_name in graph.nodes():
@@ -984,6 +1015,7 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
         pos = nx.spring_layout(graph, k=optimal_k, iterations=100, seed=42, weight='weight')
 
     # Draw the colored nodes (circles) first
+    # Keeping alpha=0.9 for the background circle, but ensuring the logo is on top and unaffected.
     nx.draw_networkx_nodes(graph, pos, node_color=node_colors, node_size=node_base_size,
                            alpha=0.9, linewidths=1, edgecolors='black')
 
@@ -993,20 +1025,22 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
     # Add logos on top of the nodes
     for node_name, p in pos.items():
         if node_name in loaded_logos:
-            # --- IMPORTANT CHANGES HERE ---
             img_offset = OffsetImage(loaded_logos[node_name],
                                      zoom=logo_display_zoom,
-                                     origin='upper',          # Standard for images, might help consistency
-                                     interpolation='bilinear' # Good quality interpolation
-                                    )
+                                     origin='upper',
+                                     interpolation='bilinear'
+                                     )
             ab = AnnotationBbox(img_offset, p,
-                                frameon=False,
+                                frameon=False,  # No frame around the image
                                 pad=0.0,
-                                boxcoords="data",
-                                xycoords="data"
-                               )
+                                boxcoords="data",  # Position image using data coordinates
+                                xycoords="data",
+                                # IMPORTANT: Add an explicit white background for the image to prevent color bleed
+                                bboxprops=dict(boxstyle="square,pad=0", fc="white", ec="none", alpha=1.0)
+                                )
             ax.add_artist(ab)
         else:
+            # Fallback for nodes without logos: draw text
             ax.text(p[0], p[1], node_name, fontsize=8, ha='center', va='center', weight='bold',
                     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'))
 
@@ -1036,9 +1070,6 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
         label = f"Community {comm_id}"
         handle = mpatches.Patch(color=color_map[comm_id], label=label)
         legend_handles.append(handle)
-
-    if any(color == 'lightgrey' for color in [color_map.get(communities.get(node), 'lightgrey') for node in graph.nodes()]):
-        legend_handles.append(mpatches.Patch(color='lightgrey', label='Unassigned / No Logo'))
 
     if legend_handles:
         plt.legend(handles=legend_handles, title="Communities", loc='upper left', bbox_to_anchor=(1, 1),
