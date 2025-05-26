@@ -1,13 +1,12 @@
 from collections import defaultdict
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Tuple
 
 import networkx as nx
 import pandas as pd
-from matplotlib import pyplot as plt
 
 # Assuming these are correctly imported from your project structure
-from src.data_utils import calculate_and_normalize_ratios, calculate_team_points
-from src.graph_utils import plot_metric_ratios_vs_points, find_communities, analyze_centrality_vs_points, \
+from src.data_utils import calculate_team_points
+from src.graph_utils import find_communities, analyze_centrality_vs_points, \
     calculate_and_print_centralities, filter_graph_by_weight, create_epl_network
 
 
@@ -63,7 +62,8 @@ def perform_epl_network_analysis(
 
     if thresholds_for_analysis is not None and len(thresholds_for_analysis) != len(metrics_to_analyze):
         print(
-            "Error: The length of 'thresholds_for_analysis' must match the length of 'metrics_to_analyze'. Aborting analysis.")
+            "Error: The length of 'thresholds_for_analysis' must match the length of 'metrics_to_analyze'. Aborting "
+            "analysis.")
         return None, None, None
 
     df_for_scope = epl_df.copy()
@@ -129,7 +129,8 @@ def perform_epl_network_analysis(
 
         if not analysis_graph_filtered or analysis_graph_filtered.number_of_edges() == 0:
             print(
-                f"No edges remaining for '{metric_base_name}' after filtering. Skipping centrality and community detection for this metric.")
+                f"No edges remaining for '{metric_base_name}' after filtering. Skipping centrality and community "
+                f"detection for this metric.")
             continue
 
         print(f"\n--- Calculating Centralities for '{metric_base_name}' (on Filtered Undirected Graph) ---")
@@ -179,7 +180,8 @@ def perform_epl_network_analysis(
                 print("No communities found in the filtered graph for this metric.")
         else:
             print(
-                f"Skipping Community Detection for '{metric_base_name}' due to no edges after filtering or an empty graph.")
+                f"Skipping Community Detection for '{metric_base_name}' due to no edges after filtering or an empty "
+                f"graph.")
 
     print("\n--- EPL Network Analysis Complete ---")
 
