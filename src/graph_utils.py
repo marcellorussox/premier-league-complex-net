@@ -700,9 +700,9 @@ def analyze_centrality_vs_points(centrality_data: Dict[str, Dict[str, float]], t
 
 def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_description: str):
     """
-    Generates individual scatter plots to visualize the relationship between specified normalized metrics
-    and normalized total league points. Each plot is presented as a separate figure.
-    Teams are differentiated by color using a categorical palette.
+    Generates a single figure with multiple subplots to visualize the relationship between
+    specified normalized metrics and normalized total league points.
+    Each subplot presents a different metric. Teams are differentiated by color.
 
     Args:
         normalized_ratios_df (pd.DataFrame): A DataFrame containing normalized metric ratios and
@@ -742,22 +742,26 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
     plot_data = normalized_ratios_df.reset_index()
 
     # Set a base font size for all text elements
-    base_fontsize = 12
-    title_fontsize = base_fontsize + 2  # Slightly larger for titles
-    label_fontsize = base_fontsize + 2
-    tick_fontsize = base_fontsize
-    legend_fontsize = base_fontsize - 3.3
-    annotation_fontsize = base_fontsize
+    # Increased all font sizes slightly for better readability
+    base_fontsize = 14  # Increased from 12
+    label_fontsize = base_fontsize + 2  # Increased from 14
+    tick_fontsize = base_fontsize  # Increased from 12
+    legend_fontsize = base_fontsize + 2  # Increased from 14
+    annotation_fontsize = base_fontsize  # Increased from 12
+
+    # Create a single figure with 2 rows and 2 columns for the 4 subplots
+    # Increased overall figure size slightly to accommodate larger fonts
+    fig, axes = plt.subplots(2, 2, figsize=(20, 16))  # Increased from 18x14
+    axes = axes.flatten()  # Flatten the axes array for easier iteration
+
+    common_handles = []
+    common_labels = []
 
     for i, (metric_col, title_suffix) in enumerate(metrics_to_plot.items()):
-        # Create a NEW figure and a NEW set of axes for each individual plot
-        fig, ax = plt.subplots(1, 1, figsize=(10, 8))  # Set appropriate dimensions for a single plot
-
-        # Set a specific title for each plot
-        ax.set_title(f'{title_suffix} vs. Normalized League Points ({scope_description})', fontsize=title_fontsize)
+        ax = axes[i]  # Get the current subplot axis
 
         sns.scatterplot(
-            data=plot_data,  # Use the DataFrame with the reset index
+            data=plot_data,
             x=metric_col,
             y='points_norm',
             hue='Team',
@@ -765,21 +769,21 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
             s=150,
             alpha=0.8,
             ax=ax,
-            legend='full'
         )
 
-        # Adjust the legend position based on the number of teams
-        if num_teams > 10:
-            ax.legend(title='Team', bbox_to_anchor=(1.02, 1), loc='upper left', borderaxespad=0.,
-                      fontsize=legend_fontsize,
-                      ncol=1, title_fontsize=label_fontsize)  # Set title_fontsize for the legend title
-        else:
-            ax.legend(title='Team', loc='best', fontsize=legend_fontsize,
-                      title_fontsize=label_fontsize)  # Set title_fontsize for the legend title
+        # Store legend handles and labels from the first subplot to create a common legend later
+        if i == 0:  # Only capture once
+            current_handles, current_labels = ax.get_legend_handles_labels()
+            # Skip the first handle/label which is the legend title 'Team'
+            common_handles = current_handles[1:]
+            common_labels = current_labels[1:]
 
-        # Add a linear regression line to show general trend
+        # Remove the individual legend from each subplot
+        if ax.legend_ is not None:
+            ax.legend_.remove()
+
         sns.regplot(
-            data=plot_data,  # Use the DataFrame with the reset index
+            data=plot_data,
             x=metric_col,
             y='points_norm',
             scatter=False,
@@ -791,35 +795,25 @@ def plot_metric_ratios_vs_points(normalized_ratios_df: pd.DataFrame, scope_descr
         ax.set_xlabel(title_suffix, fontsize=label_fontsize)
         ax.set_ylabel('Normalized Points', fontsize=label_fontsize)
 
-        # Set tick label font size
         ax.tick_params(axis='x', labelsize=tick_fontsize)
         ax.tick_params(axis='y', labelsize=tick_fontsize)
 
-        # Annotate the plot with the Pearson correlation coefficient
         correlation = normalized_ratios_df[metric_col].corr(normalized_ratios_df['points_norm'])
-        ax.text(0.05, 0.95, f'Pearson Correlation: {correlation:.2f}',
+        ax.text(0.05, 0.95, f'Corr: {correlation:.2f}',
                 transform=ax.transAxes, fontsize=annotation_fontsize,
                 verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', fc='wheat', alpha=0.5))
 
-        plt.tight_layout()  # Adjust the layout for this single figure
-        plt.show()
+    fig.suptitle(f'Metric Ratios vs. Normalized League Points ({scope_description})',
+                 fontsize=label_fontsize + 8, y=0.97)  # Increased suptitle font size
 
+    fig.legend(common_handles, common_labels, title='Team', loc='center right', bbox_to_anchor=(0.99, 0.5),
+               fontsize=legend_fontsize, ncol=1, title_fontsize=label_fontsize)
 
-# Example usage (assuming normalized_ratios_df and scope_description are defined)
-# This part is just for demonstration and not part of the requested modification.
-# if __name__ == '__main__':
-#     # Create a dummy DataFrame for demonstration
-#     data = {
-#         'Team': ['Team A', 'Team B', 'Team C', 'Team D', 'Team E', 'Team F', 'Team G', 'Team H', 'Team I', 'Team J'],
-#         'goals_scored_norm': [0.8, 0.6, 0.7, 0.5, 0.9, 0.4, 0.75, 0.65, 0.85, 0.55],
-#         'aggressiveness_committed_norm': [0.7, 0.8, 0.6, 0.9, 0.5, 0.85, 0.55, 0.75, 0.65, 0.95],
-#         'shot_accuracy_norm': [0.75, 0.65, 0.85, 0.55, 0.95, 0.45, 0.8, 0.7, 0.9, 0.6],
-#         'control_norm': [0.6, 0.7, 0.8, 0.9, 0.4, 0.75, 0.55, 0.85, 0.65, 0.95],
-#         'points_norm': [0.9, 0.7, 0.8, 0.6, 1.0, 0.5, 0.85, 0.75, 0.95, 0.65]
-#     }
-#     normalized_df = pd.DataFrame(data).set_index('Team')
-#     scope = "Test Season 2023/24"
-#     plot_metric_ratios_vs_points(normalized_df, scope)
+    # Adjust layout to prevent overlapping elements, make space for suptitle/legend, and add subplot spacing
+    plt.subplots_adjust(left=0.07, right=0.83, top=0.90, bottom=0.07,  # Adjusted general figure margins
+                        wspace=0.2, hspace=0.3)  # Added horizontal and vertical space between subplots
+
+    plt.show()
 
 
 def plot_epl_analysis_results(
@@ -922,7 +916,6 @@ def _load_team_logos(team_names: List[str], logo_path: str, base_logo_pixel_dim:
     return logos
 
 
-# Modified plot_network_communities function
 def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metric_name: str, scope_desc: str,
                              logo_folder: str = 'data/epl_logos/',
                              logo_display_zoom: float = 0.15,
@@ -947,9 +940,16 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
         print(f"Cannot plot empty graph for {metric_name}.")
         return
 
-    plt.figure(figsize=(16, 14))
+    # --- Font Size Adjustments ---
+    title_fontsize = 24
+    text_fallback_fontsize = 12
+    legend_title_fontsize = 18
+    legend_label_fontsize = 16
+
+    # --- Figure Size Adjustment ---
+    plt.figure(figsize=(18, 16))
     ax = plt.gca()
-    plt.title(f"Network Communities for {metric_name} ({scope_desc})", fontsize=18)
+    plt.title(f"Network Communities for {metric_name} ({scope_desc})", fontsize=title_fontsize)
 
     team_names_in_graph = list(graph.nodes())
     loaded_logos = _load_team_logos(team_names_in_graph, logo_folder)
@@ -961,7 +961,6 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
         '#c49c94', '#f7b6d2', '#c7c7c7', '#dbdb8d', '#9edae5'
     ]
 
-    node_colors = []
     unique_communities = sorted(list(set(communities.values())))
     color_map = {comm_id: categorical_palette[i % len(categorical_palette)]
                  for i, comm_id in enumerate(unique_communities)}
@@ -982,42 +981,47 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
             comm_u = communities.get(u)
             comm_v = communities.get(v)
             if comm_u is not None and comm_v is not None and comm_u != comm_v:
-                community_centroid_graph.add_edge(comm_u, comm_v)
+                # Add edge to centroid graph or increase weight
+                if community_centroid_graph.has_edge(comm_u, comm_v):
+                    community_centroid_graph[comm_u][comm_v]['weight'] += 1
+                else:
+                    community_centroid_graph.add_edge(comm_u, comm_v, weight=1)
 
         try:
-            centroid_pos = nx.spectral_layout(community_centroid_graph, weight=None)
+            # Use spring layout for centroids, spectral can be unstable with few nodes/edges
+            centroid_pos = nx.spring_layout(community_centroid_graph, k=2.0, iterations=100, seed=42, weight='weight')
+            if not centroid_pos:  # Fallback if spring_layout returns empty for some reason
+                centroid_pos = {comm_id: np.random.rand(2) * 2 - 1 for comm_id in unique_communities}
         except Exception:
-            print("Warning: Spectral layout for centroids failed, falling back to spring layout.")
-            centroid_pos = nx.spring_layout(community_centroid_graph, k=2.0, iterations=100, seed=42)
-
-        if not centroid_pos:
+            print("Warning: Layout for centroids failed, falling back to random positions.")
             centroid_pos = {comm_id: np.random.rand(2) * 2 - 1 for comm_id in unique_communities}
 
         initial_pos = {}
         for node_name in graph.nodes():
             comm_id = communities.get(node_name)
             if comm_id is not None and comm_id in centroid_pos:
-                initial_pos[node_name] = centroid_pos[comm_id] + np.random.rand(2) * 0.03 - 0.015
+                # Add a small random jitter to initial positions within communities
+                initial_pos[node_name] = centroid_pos[comm_id] + np.random.rand(
+                    2) * 0.05 - 0.025  # Slightly more jitter
             else:
                 initial_pos[node_name] = np.random.rand(2) * 2 - 1
 
-        optimal_k = 0.5 / np.sqrt(num_nodes) if num_nodes > 0 else 0.15
+        optimal_k = 0.7 / np.sqrt(num_nodes) if num_nodes > 0 else 0.15  # Adjusted optimal_k for more spread
 
         try:
-            pos = nx.spring_layout(graph, pos=initial_pos, k=optimal_k, iterations=150, seed=42, weight='weight')
+            pos = nx.spring_layout(graph, pos=initial_pos, k=optimal_k, iterations=200, seed=42, weight='weight')
         except Exception as e:
             print(f"Error during spring layout refinement: {e}. Falling back to default spring layout.")
-            pos = nx.spring_layout(graph, k=0.15, iterations=50, seed=42)
+            pos = nx.spring_layout(graph, k=0.2, iterations=100, seed=42)  # Adjusted fallback k and iterations
 
     else:
         print("Less than 2 communities detected or 0 edges; using standard spring layout.")
-        optimal_k = 0.5 / np.sqrt(num_nodes) if num_nodes > 0 else 0.15
-        pos = nx.spring_layout(graph, k=optimal_k, iterations=100, seed=42, weight='weight')
+        optimal_k = 0.7 / np.sqrt(num_nodes) if num_nodes > 0 else 0.15  # Adjusted optimal_k for more spread
+        pos = nx.spring_layout(graph, k=optimal_k, iterations=150, seed=42, weight='weight')  # Increased iterations
 
     # Draw the colored nodes (circles) first
-    # Keeping alpha=0.9 for the background circle, but ensuring the logo is on top and unaffected.
     nx.draw_networkx_nodes(graph, pos, node_color=node_colors, node_size=node_base_size,
-                           alpha=0.9, linewidths=1, edgecolors='black')
+                           alpha=0.9, linewidths=1.5, edgecolors='black')  # Increased linewidths for better definition
 
     # Draw edges
     nx.draw_networkx_edges(graph, pos, alpha=0.3, edge_color='gray')
@@ -1031,17 +1035,16 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
                                      interpolation='bilinear'
                                      )
             ab = AnnotationBbox(img_offset, p,
-                                frameon=False,  # No frame around the image
+                                frameon=False,
                                 pad=0.0,
-                                boxcoords="data",  # Position image using data coordinates
+                                boxcoords="data",
                                 xycoords="data",
-                                # IMPORTANT: Add an explicit white background for the image to prevent color bleed
                                 bboxprops=dict(boxstyle="square,pad=0", fc="white", ec="none", alpha=1.0)
                                 )
             ax.add_artist(ab)
         else:
-            # Fallback for nodes without logos: draw text
-            ax.text(p[0], p[1], node_name, fontsize=8, ha='center', va='center', weight='bold',
+            # Fallback for nodes without logos: draw text with increased font size
+            ax.text(p[0], p[1], node_name, fontsize=text_fallback_fontsize, ha='center', va='center', weight='bold',
                     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'))
 
     # Adjust overall scaling of the plot area
@@ -1053,8 +1056,9 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
             min_x, max_x = min(all_x), max(all_x)
             min_y, max_y = min(all_y), max(all_y)
 
-            x_pad = (max_x - min_x) * 0.15 if num_nodes > 1 else 0.2
-            y_pad = (max_y - min_y) * 0.15 if num_nodes > 1 else 0.2
+            # Increased padding slightly to ensure all nodes/labels fit
+            x_pad = (max_x - min_x) * 0.20 if num_nodes > 1 else 0.25
+            y_pad = (max_y - min_y) * 0.20 if num_nodes > 1 else 0.25
 
             ax.set_xlim(min_x - x_pad, max_x + x_pad)
             ax.set_ylim(min_y - y_pad, max_y + y_pad)
@@ -1072,9 +1076,11 @@ def plot_network_communities(graph: nx.Graph, communities: Dict[str, int], metri
         legend_handles.append(handle)
 
     if legend_handles:
+        # Increased legend font sizes
         plt.legend(handles=legend_handles, title="Communities", loc='upper left', bbox_to_anchor=(1, 1),
-                   fontsize=10)
+                   fontsize=legend_label_fontsize, title_fontsize=legend_title_fontsize)
 
-    plt.tight_layout(rect=[0, 0, 0.88, 1])
+    # Adjusted tight_layout rect to ensure legend fits well
+    plt.tight_layout(rect=[0, 0, 0.85, 1])  # Slightly more space on the right for the legend
     plt.axis('off')
     plt.show()
