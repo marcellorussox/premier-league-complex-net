@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 
 import networkx as nx
 import pandas as pd
@@ -20,12 +20,13 @@ def perform_epl_network_analysis(
         keep_above_threshold: bool = True,
         community_resolution: float = 1.0,
         use_normalized_abs_diff_for_filter: bool = True
-) -> Tuple[Optional[pd.DataFrame], Optional[str], Optional[Dict[str, int]]]:
+) -> Dict[str, Any]:
     """
-    Performs a comprehensive network analysis of English Premier League data.
+    Performs a comprehensive network analysis of English Premier League data for multiple metrics.
     This includes graph creation, calculation of network properties, centrality measures,
     Pearson correlation analysis, and community detection.
-    Plotting functionality has been externalized to a separate function.
+    It collects all necessary data for plotting network communities and returns it,
+    allowing for external plotting after all analyses are complete.
 
     Args:
         epl_df (pd.DataFrame): The main DataFrame containing EPL match data.
@@ -50,21 +51,24 @@ def perform_epl_network_analysis(
                                                    absolute difference ('{metric}_diff_abs').
 
     Returns:
-        Tuple[Optional[pd.DataFrame], Optional[str], Optional[Dict[str, int]]]:
-            A tuple containing:
-            - A DataFrame (`pd.DataFrame`) representing the data for the determined analysis scope.
-            - A string (`str`) describing the analysis scope (e.g., "Season 2016/17").
-            - A dictionary (`Dict[str, int]`) of team names to their total points for the scope.
-            Returns (None, None, None) if network creation fails or input is empty.
+        Dict[str, Any]: A dictionary containing all analysis results. Keys include:
+                        - 'network_metrics_results': Dict[str, Dict[str, Any]] (detailed per-metric network results, including graph and communities for plotting)
+                        - 'df_for_scope': pd.DataFrame (the original dataframe sliced by scope)
+                        - 'scope_description': str
+                        - 'league_points': Dict[str, int]
+                        Returns an empty dictionary if network creation fails.
     """
     if metrics_to_analyze is None:
         metrics_to_analyze = ['goals', 'aggressiveness', 'shot_accuracy', 'control', 'points']
 
-    if thresholds_for_analysis is not None and len(thresholds_for_analysis) != len(metrics_to_analyze):
+    if thresholds_for_analysis is None:
+        thresholds_for_analysis = [None] * len(metrics_to_analyze)
+
+    if len(thresholds_for_analysis) != len(metrics_to_analyze):
         print(
             "Error: The length of 'thresholds_for_analysis' must match the length of 'metrics_to_analyze'. Aborting "
             "analysis.")
-        return None, None, None
+        return {}
 
     df_for_scope = epl_df.copy()
     scope_description = "the entire dataset"
@@ -94,7 +98,7 @@ def perform_epl_network_analysis(
 
     if graph_to_analyze is None:
         print("Network creation failed. Aborting analysis.")
-        return None, None, None
+        return {}
 
     print("\n--- Overall Network Properties (Initial Directed Graph) ---")
     print(f"Number of nodes: {graph_to_analyze.number_of_nodes()}")
@@ -106,14 +110,13 @@ def perform_epl_network_analysis(
 
     league_points = calculate_team_points(df_for_scope)
 
-    all_centrality_results_by_metric = {}
+    # This will store all the network analysis results for each metric
+    network_metrics_results = {}
 
     print("\n--- Starting Unified Centrality and Community Analysis ---")
 
     for i, metric_base_name in enumerate(metrics_to_analyze):
-        current_threshold = None
-        if thresholds_for_analysis is not None:
-            current_threshold = thresholds_for_analysis[i]
+        current_threshold = thresholds_for_analysis[i]
 
         print(f"\n### Analysis for Metric: '{metric_base_name}' ###")
 
@@ -127,10 +130,16 @@ def perform_epl_network_analysis(
             keep_above=keep_above_threshold
         )
 
-        if not analysis_graph_filtered or analysis_graph_filtered.number_of_edges() == 0:
+        if not analysis_graph_filtered or analysis_graph_filtered.number_of_nodes() == 0:
             print(
-                f"No edges remaining for '{metric_base_name}' after filtering. Skipping centrality and community "
-                f"detection for this metric.")
+                f"No nodes or edges remaining for '{metric_base_name}' after filtering. Skipping centrality, "
+                f"community detection, and plotting for this metric.")
+            # Store None for graph/communities if not available
+            network_metrics_results[metric_base_name] = {
+                'filtered_graph': None,
+                'centrality_scores': None,
+                'communities': None,
+            }
             continue
 
         print(f"\n--- Calculating Centralities for '{metric_base_name}' (on Filtered Undirected Graph) ---")
@@ -140,32 +149,11 @@ def perform_epl_network_analysis(
             metric=metric_base_name
         )
 
-        if centrality_scores and 'degree' in centrality_scores:
-            all_centrality_results_by_metric[metric_base_name] = centrality_scores
-
-            if league_points:
-                teams_in_graph = list(analysis_graph_filtered.nodes())
-                if not teams_in_graph:
-                    print("\nNo teams found in the filtered graph for centrality. Skipping correlation analysis.")
-                else:
-                    print(
-                        f"\n--- Performing Pearson Correlation Analysis for {metric_base_name} Centrality vs. League Points ---")
-                    analyze_centrality_vs_points(
-                        centrality_scores,
-                        league_points,
-                        teams_in_graph
-                    )
-            else:
-                print("\nSkipping Pearson correlation analysis due to missing league points.")
-        else:
-            print(f"Skipping correlation analysis for '{metric_base_name}' due to no valid centrality results.")
-
+        communities = None
         print(f"\n--- Starting Community Detection for Metric: '{metric_base_name}' ---")
 
-        community_graph = analysis_graph_filtered
-
-        if community_graph.number_of_edges() > 0:
-            communities = find_communities(community_graph, resolution=community_resolution)
+        if analysis_graph_filtered.number_of_edges() > 0:
+            communities = find_communities(analysis_graph_filtered, resolution=community_resolution)
 
             if communities:
                 print("\nDetected Communities:")
@@ -176,16 +164,43 @@ def perform_epl_network_analysis(
                 for comm_id in sorted(communities_by_id.keys()):
                     teams = communities_by_id[comm_id]
                     print(f"  Community {comm_id}: {', '.join(teams)}")
-
-                plot_network_communities(analysis_graph_filtered, communities, metric_base_name, scope_description)
             else:
                 print("No communities found in the filtered graph for this metric.")
         else:
             print(
-                f"Skipping Community Detection for '{metric_base_name}' due to no edges after filtering or an empty "
-                f"graph.")
+                f"Skipping Community Detection for '{metric_base_name}' due to no edges after filtering or an empty graph.")
+
+        # Store all relevant data for the current metric's network analysis
+        network_metrics_results[metric_base_name] = {
+            'filtered_graph': analysis_graph_filtered,
+            'centrality_scores': centrality_scores,
+            'communities': communities,
+        }
+
+        # Perform Pearson Correlation Analysis for this metric
+        if centrality_scores and 'degree' in centrality_scores and league_points:
+            teams_in_graph = list(analysis_graph_filtered.nodes())
+            if not teams_in_graph:
+                print("\nNo teams found in the filtered graph for centrality. Skipping correlation analysis.")
+            else:
+                print(
+                    f"\n--- Performing Pearson Correlation Analysis for {metric_base_name} Centrality vs. League "
+                    f"Points ---")
+                analyze_centrality_vs_points(
+                    centrality_scores,
+                    league_points,
+                    teams_in_graph
+                )
+        else:
+            print(
+                f"Skipping Pearson correlation analysis for '{metric_base_name}' due to no valid centrality results "
+                f"or missing league points.")
 
     print("\n--- EPL Network Analysis Complete ---")
 
-    # Return the data needed for external plotting
-    return df_for_scope, scope_description, league_points
+    return {
+        'network_metrics_results': network_metrics_results,
+        'df_for_scope': df_for_scope,
+        'scope_description': scope_description,
+        'league_points': league_points
+    }
