@@ -1,34 +1,43 @@
 import os
 from collections import defaultdict
 from typing import Optional, Dict, List, Any
-import numpy as np
 
 import community as co
-import networkx as nx
-import pandas as pd
-from matplotlib import pyplot as plt
-import seaborn as sns
 import matplotlib.patches as mpatches
+import networkx as nx
+import numpy as np
+import pandas as pd
+import seaborn as sns
 from PIL import Image
+from matplotlib import pyplot as plt
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
-from src.data_utils import normalize_val, normalize_diff_symmetric, calculate_and_normalize_ratios, \
+from src.data_utils import calculate_and_normalize_ratios, \
     calculate_team_points
 
 
-def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_year: Optional[int] = None,
-                       end_year: Optional[int] = None) -> Optional[nx.DiGraph]:
+def normalize_to_0_1(value: float, min_val: float, max_val: float) -> float:
     """
-    Creates a DIRECTED graph network where each edge (SourceTeam -> TargetTeam)
-    represents the aggregated performance/action of the SourceTeam AGAINST the TargetTeam,
-    along with the calculated differences in performance between Source and Target.
+    Normalizes a value from [min_val, max_val] to [0, 1].
+    Handles cases where min_val == max_val to prevent division by zero.
+    """
+    if max_val == min_val:
+        return 0.0
+    return (value - min_val) / (max_val - min_val)
 
-    Edge attributes reflect the SourceTeam's actions (e.g., goals scored by Source,
-    fouls committed by Source) and the overall differences (Source vs Target).
-    To obtain the TargetTeam's actions against the Source, one would inspect the reverse edge (TargetTeam -> SourceTeam).
+
+def create_epl_network(df: pd.DataFrame, metric_name: str,
+                       season: Optional[str] = None, start_year: Optional[int] = None,
+                       end_year: Optional[int] = None) -> Optional[nx.Graph]:
+    """
+    Creates an UNDIRECTED graph network where each edge (TeamA - TeamB) represents
+    the SIMILARITY in their TOTAL performance for a given 'metric_name'
+    across the specified season(s). Higher edge weight means greater similarity.
 
     Args:
         df (pandas.DataFrame): The complete match DataFrame.
+        metric_name (str): The specific metric to use for edge weights
+                           ('goals', 'aggressiveness', 'control', 'points').
         season (str, optional): A specific season to analyze (e.g., '2016/17').
                                 This parameter takes precedence over start_year/end_year if both are provided.
                                 Defaults to None.
@@ -38,12 +47,14 @@ def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_yea
                                   Defaults to None.
 
     Returns:
-        nx.DiGraph: The directed graph, or None if the data to process is empty or invalid.
+        nx.Graph: The undirected graph, or None if the data to process is empty, invalid,
+                  or the metric_name is not supported.
     """
 
     df_to_process = df.copy()
     current_scope_name = "the entire dataset"
 
+    # --- Data Filtering by Season/Year Range ---
     if season:
         df_to_process = df_to_process[df_to_process['Season'] == season].copy()
         current_scope_name = f"season {season}"
@@ -67,8 +78,10 @@ def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_yea
         print(f"No data found for {current_scope_name}.")
         return None
 
+    # --- Data Cleaning and Preprocessing ---
+    # Ensure critical columns exist and are numeric
     cols_to_fill = ['FullTimeHomeGoals', 'FullTimeAwayGoals', 'HomeShots', 'AwayShots',
-                    'HomeShotsOnTarget', 'AwayShotsOnTarget', 'HomeCorners', 'AwayCorners',
+                    'HomeCorners', 'AwayCorners',
                     'HomeFouls', 'AwayFouls', 'HomeYellowCards', 'AwayYellowCards',
                     'HomeRedCards', 'AwayRedCards', 'FullTimeResult']
 
@@ -82,376 +95,117 @@ def create_epl_network(df: pd.DataFrame, season: Optional[str] = None, start_yea
         elif col not in ['HomeTeam', 'AwayTeam', 'FullTimeResult']:
             df_to_process[col] = df_to_process[col].fillna(0)
 
-    # Calculate points per match
+    # Calculate points per match (needed for total points aggregation)
     df_to_process['HomePoints'] = df_to_process['FullTimeResult'].apply(
         lambda x: 3 if x == 'H' else (1 if x == 'D' else 0))
     df_to_process['AwayPoints'] = df_to_process['FullTimeResult'].apply(
         lambda x: 3 if x == 'A' else (1 if x == 'D' else 0))
 
-    directional_stats_agg = defaultdict(lambda: {
-        'goals_scored_by_source': 0, 'goals_scored_by_target': 0,
-        'sot_by_source': 0, 'sot_by_target': 0,
-        'total_shots_by_source': 0, 'total_shots_by_target': 0,
-        'fouls_by_source': 0, 'fouls_by_target': 0,
-        'yc_by_source': 0, 'yc_by_target': 0,
-        'rc_by_source': 0, 'rc_by_target': 0,
-        'corners_by_source': 0, 'corners_by_target': 0,
-        'points_scored_by_source': 0, 'points_scored_by_target': 0,
-        'matches_played': 0
+    # --- Aggregation of TOTAL TEAM STATS across all their matches in the scope ---
+    team_total_stats: Dict[str, Dict[str, Any]] = defaultdict(lambda: {
+        'total_goals_scored': 0,
+        'total_fouls': 0,
+        'total_yellow_cards': 0,
+        'total_red_cards': 0,
+        'total_corners': 0,
+        'total_shots': 0,
+        'total_points': 0
     })
 
     for _, match in df_to_process.iterrows():
         ht = match['HomeTeam']
         at = match['AwayTeam']
 
-        # HOME TEAM -> AWAY TEAM (HT is SOURCE, AT is TARGET)
-        directional_stats_agg[(ht, at)]['goals_scored_by_source'] += match['FullTimeHomeGoals']
-        directional_stats_agg[(ht, at)]['goals_scored_by_target'] += match['FullTimeAwayGoals']
-        directional_stats_agg[(ht, at)]['sot_by_source'] += match['HomeShotsOnTarget']
-        directional_stats_agg[(ht, at)]['sot_by_target'] += match['AwayShotsOnTarget']
-        directional_stats_agg[(ht, at)]['total_shots_by_source'] += match['HomeShots']
-        directional_stats_agg[(ht, at)]['total_shots_by_target'] += match['AwayShots']
-        directional_stats_agg[(ht, at)]['fouls_by_source'] += match['HomeFouls']
-        directional_stats_agg[(ht, at)]['fouls_by_target'] += match['AwayFouls']
-        directional_stats_agg[(ht, at)]['yc_by_source'] += match['HomeYellowCards']
-        directional_stats_agg[(ht, at)]['yc_by_target'] += match['AwayYellowCards']
-        directional_stats_agg[(ht, at)]['rc_by_source'] += match['HomeRedCards']
-        directional_stats_agg[(ht, at)]['rc_by_target'] += match['AwayRedCards']
-        directional_stats_agg[(ht, at)]['corners_by_source'] += match['HomeCorners']
-        directional_stats_agg[(ht, at)]['corners_by_target'] += match['AwayCorners']
-        directional_stats_agg[(ht, at)]['points_scored_by_source'] += match['HomePoints']
-        directional_stats_agg[(ht, at)]['points_scored_by_target'] += match['AwayPoints']
-        directional_stats_agg[(ht, at)]['matches_played'] += 1
+        # Aggregate for Home Team
+        team_total_stats[ht]['total_goals_scored'] += match['FullTimeHomeGoals']
+        team_total_stats[ht]['total_fouls'] += match['HomeFouls']
+        team_total_stats[ht]['total_yellow_cards'] += match['HomeYellowCards']
+        team_total_stats[ht]['total_red_cards'] += match['HomeRedCards']
+        team_total_stats[ht]['total_corners'] += match['HomeCorners']
+        team_total_stats[ht]['total_shots'] += match['HomeShots']
+        team_total_stats[ht]['total_points'] += match['HomePoints']
 
-        # AWAY TEAM -> HOME TEAM (AT is SOURCE, HT is TARGET)
-        directional_stats_agg[(at, ht)]['goals_scored_by_source'] += match['FullTimeAwayGoals']
-        directional_stats_agg[(at, ht)]['goals_scored_by_target'] += match['FullTimeHomeGoals']
-        directional_stats_agg[(at, ht)]['sot_by_source'] += match['AwayShotsOnTarget']
-        directional_stats_agg[(at, ht)]['sot_by_target'] += match['HomeShotsOnTarget']
-        directional_stats_agg[(at, ht)]['total_shots_by_source'] += match['AwayShots']
-        directional_stats_agg[(at, ht)]['total_shots_by_target'] += match['HomeShots']
-        directional_stats_agg[(at, ht)]['fouls_by_source'] += match['AwayFouls']
-        directional_stats_agg[(at, ht)]['fouls_by_target'] += match['HomeFouls']
-        directional_stats_agg[(at, ht)]['yc_by_source'] += match['AwayYellowCards']
-        directional_stats_agg[(at, ht)]['yc_by_target'] += match['HomeYellowCards']
-        directional_stats_agg[(at, ht)]['rc_by_source'] += match['AwayRedCards']
-        directional_stats_agg[(at, ht)]['rc_by_target'] += match['HomeRedCards']
-        directional_stats_agg[(at, ht)]['corners_by_source'] += match['AwayCorners']
-        directional_stats_agg[(at, ht)]['corners_by_target'] += match['HomeCorners']
-        directional_stats_agg[(at, ht)]['points_scored_by_source'] += match['AwayPoints']
-        directional_stats_agg[(at, ht)]['points_scored_by_target'] += match['HomePoints']
-        directional_stats_agg[(at, ht)]['matches_played'] += 1
+        # Aggregate for Away Team
+        team_total_stats[at]['total_goals_scored'] += match['FullTimeAwayGoals']
+        team_total_stats[at]['total_fouls'] += match['AwayFouls']
+        team_total_stats[at]['total_yellow_cards'] += match['AwayYellowCards']
+        team_total_stats[at]['total_red_cards'] += match['AwayRedCards']
+        team_total_stats[at]['total_corners'] += match['AwayCorners']
+        team_total_stats[at]['total_shots'] += match['AwayShots']
+        team_total_stats[at]['total_points'] += match['AwayPoints']
 
-    all_teams_in_scope = pd.concat([df_to_process['HomeTeam'], df_to_process['AwayTeam']]).unique()
-    G = nx.DiGraph()
-    G.add_nodes_from(all_teams_in_scope)
-
-    # Collect values for normalization ranges
-    all_goals_scored_by_source = []
-    all_aggressiveness_by_source = []
-    all_shot_accuracy_by_source = []
-    all_control_by_source = []
-    all_points_scored_by_source = []
-
-    # Collect RAW DIFFERENCES (can be negative or positive) for symmetric normalization
-    all_goals_diff = []
-    all_aggressiveness_diff = []
-    all_shot_accuracy_diff = []
-    all_control_diff = []
-    all_points_diff = []
-
-    processed_edges_data = {}
-    for (source_team, target_team), agg_stats in directional_stats_agg.items():
-        if source_team == target_team:
-            continue
-
-        # --- RAW METRICS FOR SOURCE TEAM'S ACTION AGAINST TARGET TEAM ---
-        current_goals_scored = agg_stats['goals_scored_by_source']
-        current_agg_by_source = agg_stats['fouls_by_source'] + agg_stats['yc_by_source'] + 3 * agg_stats['rc_by_source']
-        current_sa_by_source = (agg_stats['sot_by_source'] / agg_stats['total_shots_by_source']) if agg_stats[
-                                                                                                        'total_shots_by_source'] > 0 else 0.0
-        current_ctrl_by_source = agg_stats['corners_by_source'] + agg_stats['total_shots_by_source']
-        current_points_scored = agg_stats['points_scored_by_source']
-
-        # --- CALCULATED DIFFERENCES (Source's performance relative to Target's performance against Source) ---
-        goals_diff = current_goals_scored - agg_stats['goals_scored_by_target']
-        aggressiveness_diff = current_agg_by_source - (
-                agg_stats['fouls_by_target'] + agg_stats['yc_by_target'] + 3 * agg_stats['rc_by_target'])
-
-        sa_of_target = (agg_stats['sot_by_target'] / agg_stats['total_shots_by_target']) if agg_stats[
-                                                                                                'total_shots_by_target'] > 0 else 0.0
-        shot_accuracy_diff = current_sa_by_source - sa_of_target
-
-        ctrl_of_target = agg_stats['corners_by_target'] + agg_stats['total_shots_by_target']
-        control_diff = current_ctrl_by_source - ctrl_of_target
-
-        points_diff = current_points_scored - agg_stats['points_scored_by_target']
-
-        processed_edges_data[(source_team, target_team)] = {
-            'goals_scored': current_goals_scored,
-            'aggressiveness_committed': current_agg_by_source,
-            'shot_accuracy': current_sa_by_source,
-            'control': current_ctrl_by_source,
-            'points_scored': current_points_scored,
-
-            'goals_diff': goals_diff,
-            'aggressiveness_diff': aggressiveness_diff,
-            'shot_accuracy_diff': shot_accuracy_diff,
-            'control_diff': control_diff,
-            'points_diff': points_diff,
-
-            'matches_played': agg_stats['matches_played']
+    # --- Calculate Derived Metrics for Each Team's Totals ---
+    calculated_team_metrics = {}
+    for team, stats in team_total_stats.items():
+        calculated_team_metrics[team] = {
+            'goals': stats['total_goals_scored'],
+            'aggressiveness': stats['total_fouls'] + stats['total_yellow_cards'] + (3 * stats['total_red_cards']),
+            'control': stats['total_corners'] + stats['total_shots'],
+            'points': stats['total_points']
         }
 
-        # Collect values for min-max normalization ranges
-        all_goals_scored_by_source.append(current_goals_scored)
-        all_aggressiveness_by_source.append(current_agg_by_source)
-        all_shot_accuracy_by_source.append(current_sa_by_source)
-        all_control_by_source.append(current_ctrl_by_source)
-        all_points_scored_by_source.append(current_points_scored)
+    # --- Validate the requested metric_name ---
+    supported_metrics = ['goals', 'aggressiveness', 'control', 'points']
+    if metric_name not in supported_metrics:
+        print(f"Error: Unsupported metric_name '{metric_name}'. Supported metrics are: {supported_metrics}")
+        return None
 
-        # Append RAW (signed) differences for max_abs_diff calculation
-        all_goals_diff.append(goals_diff)
-        all_aggressiveness_diff.append(aggressiveness_diff)
-        all_shot_accuracy_diff.append(shot_accuracy_diff)  # Corrected: append raw diff
-        all_control_diff.append(control_diff)  # Corrected: append raw diff
-        all_points_diff.append(points_diff)  # Corrected: append raw diff
+    all_teams_in_scope = list(calculated_team_metrics.keys())
+    if not all_teams_in_scope:
+        print(f"No teams found in the data for {current_scope_name}.")
+        return None
 
-    # Calculate global min/max for normalization of source metrics (range 0-1)
-    min_goals_scored, max_goals_scored = (
-        min(all_goals_scored_by_source), max(all_goals_scored_by_source)) if all_goals_scored_by_source else (0, 0)
-    min_agg_by_source, max_agg_by_source = (
-        min(all_aggressiveness_by_source), max(all_aggressiveness_by_source)) if all_aggressiveness_by_source else (
-        0, 0)
-    min_sa_by_source, max_sa_by_source = (
-        min(all_shot_accuracy_by_source), max(all_shot_accuracy_by_source)) if all_shot_accuracy_by_source else (0, 0)
-    min_ctrl_by_source, max_ctrl_by_source = (
-        min(all_control_by_source), max(all_control_by_source)) if all_control_by_source else (0, 0)
-    min_points_scored, max_points_scored = (
-        min(all_points_scored_by_source), max(all_points_scored_by_source)) if all_points_scored_by_source else (0, 0)
+    G = nx.Graph()  # Initialized as an Undirected Graph
+    G.add_nodes_from(all_teams_in_scope)
 
-    # Calculate GLOBAL MAX ABSOLUTE DIFFERENCE for symmetric normalization (-1 to 1)
-    # This addresses the "squeezing" problem and ensures 0 difference maps to 0 normalized.
-    max_abs_goals_diff = max(abs(val) for val in all_goals_diff) if all_goals_diff else 0
-    max_abs_agg_diff = max(abs(val) for val in all_aggressiveness_diff) if all_aggressiveness_diff else 0
-    max_abs_sa_diff = max(abs(val) for val in all_shot_accuracy_diff) if all_shot_accuracy_diff else 0
-    max_abs_ctrl_diff = max(abs(val) for val in all_control_diff) if all_control_diff else 0
-    max_abs_points_diff = max(abs(val) for val in all_points_diff) if all_points_diff else 0
+    # --- Calculate and Add Edges based on Metric Difference ---
+    # Store all raw differences to find min/max for normalization
+    raw_metric_differences = []
 
-    # Add edges to the graph with all calculated attributes
-    for (source_team, target_team), stats in processed_edges_data.items():
-        # Normalized totals (actions of source_team against target_team) - remain (0,1)
-        goals_scored_norm = normalize_val(stats['goals_scored'], min_goals_scored, max_goals_scored,
-                                          target_range=(0, 1))
-        agg_committed_norm = normalize_val(stats['aggressiveness_committed'], min_agg_by_source, max_agg_by_source,
-                                           target_range=(0, 1))
-        sa_norm = normalize_val(stats['shot_accuracy'], min_sa_by_source, max_sa_by_source, target_range=(0, 1))
-        ctrl_norm = normalize_val(stats['control'], min_ctrl_by_source, max_ctrl_by_source, target_range=(0, 1))
-        points_scored_norm = normalize_val(stats['points_scored'], min_points_scored, max_points_scored,
-                                           target_range=(0, 1))
+    # Use a set to keep track of processed undirected edges
+    processed_edges = set()
 
-        # Normalized Differences (range -1 to 1, sign retained)
-        goals_diff_norm = normalize_diff_symmetric(stats['goals_diff'], max_abs_goals_diff)
-        agg_diff_norm = normalize_diff_symmetric(stats['aggressiveness_diff'], max_abs_agg_diff)
-        sa_diff_norm = normalize_diff_symmetric(stats['shot_accuracy_diff'], max_abs_sa_diff)
-        ctrl_diff_norm = normalize_diff_symmetric(stats['control_diff'], max_abs_ctrl_diff)
-        points_diff_norm = normalize_diff_symmetric(stats['points_diff'], max_abs_points_diff)
+    for i, team_a in enumerate(all_teams_in_scope):
+        for j, team_b in enumerate(all_teams_in_scope):
+            if team_a == team_b:
+                continue
 
-        G.add_edge(source_team, target_team,
-                   # Raw totals (actions of source_team against target_team)
-                   goals_scored=stats['goals_scored'],
-                   aggressiveness_committed=stats['aggressiveness_committed'],
-                   shot_accuracy=stats['shot_accuracy'],
-                   control=stats['control'],
-                   points_scored=stats['points_scored'],
+            # Ensure each undirected edge is processed only once
+            # Add a canonical representation (e.g., sort the tuple)
+            edge_tuple = tuple(sorted((team_a, team_b)))
+            if edge_tuple in processed_edges:
+                continue
 
-                   # Normalized totals (actions of source_team against target_team) - remain (0,1)
-                   goals_scored_norm=goals_scored_norm,
-                   aggressiveness_committed_norm=agg_committed_norm,
-                   shot_accuracy_norm=sa_norm,
-                   control_norm=ctrl_norm,
-                   points_norm=points_scored_norm,
+            val_a = calculated_team_metrics[team_a][metric_name]
+            val_b = calculated_team_metrics[team_b][metric_name]
 
-                   # Raw Differences (signed)
-                   goals_diff=stats['goals_diff'],
-                   aggressiveness_diff=stats['aggressiveness_diff'],
-                   shot_accuracy_diff=stats['shot_accuracy_diff'],
-                   control_diff=stats['control_diff'],
-                   points_diff=stats['points_diff'],
+            raw_diff = abs(val_a - val_b)
+            raw_metric_differences.append(raw_diff)
 
-                   # Absolute Raw Differences
-                   goals_diff_abs=abs(stats['goals_diff']),
-                   aggressiveness_diff_abs=abs(stats['aggressiveness_diff']),
-                   shot_accuracy_diff_abs=abs(stats['shot_accuracy_diff']),
-                   control_diff_abs=abs(stats['control_diff']),
-                   points_diff_abs=abs(stats['points_diff']),
+            # Add edge with raw difference as an attribute
+            # We will update 'weight' after normalization
+            G.add_edge(team_a, team_b, raw_diff=raw_diff)
+            processed_edges.add(edge_tuple)  # Mark as processed
 
-                   # Normalized Differences (range -1 to 1, sign retained)
-                   goals_diff_norm=goals_diff_norm,
-                   aggressiveness_diff_norm=agg_diff_norm,
-                   shot_accuracy_diff_norm=sa_diff_norm,
-                   control_diff_norm=ctrl_diff_norm,
-                   points_diff_norm=points_diff_norm,
+    # --- Normalize Edge Weights (Similarity) ---
+    # Find min and max of all collected absolute differences
+    min_raw_diff = min(raw_metric_differences) if raw_metric_differences else 0.0
+    max_raw_diff = max(raw_metric_differences) if raw_metric_differences else 0.0
 
-                   # Absolute Normalized Differences (range 0-1, always positive)
-                   goals_diff_norm_abs=abs(goals_diff_norm),
-                   aggressiveness_diff_norm_abs=abs(agg_diff_norm),
-                   shot_accuracy_diff_norm_abs=abs(sa_diff_norm),
-                   control_diff_norm_abs=abs(ctrl_diff_norm),
-                   points_diff_norm_abs=abs(points_diff_norm),
+    for u, v, data in G.edges(data=True):
+        # Normalize the absolute difference (dissimilarity) to a [0, 1] range.
+        normalized_dissimilarity = normalize_to_0_1(data['raw_diff'], min_raw_diff, max_raw_diff)
 
-                   matches_played=stats['matches_played']
-                   )
+        # For community detection and general network analysis, a higher 'weight'
+        # typically implies a stronger connection (i.e., higher similarity).
+        # So, convert dissimilarity (0=identical, 1=max_different) to similarity (1=identical, 0=max_different).
+        G.edges[u, v]['weight'] = 1 - normalized_dissimilarity
+        G.edges[u, v][
+            'normalized_dissimilarity'] = normalized_dissimilarity  # Store normalized dissimilarity for clarity
 
-    print(f"Network created for {current_scope_name} with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
+    print(f"Undirected network created for {current_scope_name} based on '{metric_name}' metric.")
+    print(f"Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()}.")
     return G
-
-
-def filter_graph_by_weight(
-        graph: nx.DiGraph,  # The input remains a directed graph (DiGraph)
-        metric: str,
-        threshold: Optional[float],
-        use_normalized_abs_diff_for_filter: bool = True,  # True: _diff_norm_abs, False: _diff_abs
-        keep_above: bool = True
-) -> Optional[nx.Graph]:
-    """
-    Filters a directed graph based on the absolute intensity of the reciprocal relationship
-    between two teams. It returns a new UNDIRECTED graph where an edge between u and v
-    is included ONLY if their reciprocal relationship meets the filtering criteria.
-    The 'weight' attribute on the resulting edge will be set to indicate similarity (1 - difference),
-    making it suitable for Louvain community detection.
-
-    Args:
-        graph (nx.DiGraph): The original directed graph.
-        metric (str): The base name of the metric for filtering (e.g., 'goals').
-        threshold (float, optional): The threshold value for filtering. If None, no filtering is applied.
-        use_normalized_abs_diff_for_filter (bool): If True, the filter will consider the
-                                                    '{metric}_diff_norm_abs' attribute (range 0-1).
-                                                    If False, it will consider the raw absolute
-                                                    '{metric}_diff_abs' attribute.
-        keep_above (bool): If True, keeps pairs where the intensity (difference) >= threshold.
-                                     If False, keeps pairs where the intensity (difference) <= threshold.
-
-    Returns:
-        nx.Graph: A new UNDIRECTED graph with filtered reciprocal edges and a 'weight' attribute
-                    suitable for Louvain (representing similarity).
-                    Returns None if the input graph is empty or no edges remain after filtering.
-    """
-    if not graph or graph.number_of_nodes() == 0:
-        print("Input graph is empty or invalid for filtering.")
-        return None
-
-    # Determine the attribute to use for filtering based on intensity
-    # This attribute will be compared against the 'threshold'
-    filter_attribute_name = f"{metric}_diff_norm_abs" if use_normalized_abs_diff_for_filter else f"{metric}_diff_abs"
-
-    # Determine the source attribute for the 'weight' in the resulting graph (for Louvain)
-    # Louvain requires a positive weight representing strength or similarity.
-    # The normalized absolute difference ('_diff_norm_abs') is consistently used as the base
-    # for this weight, as it is in the [0, 1] range and easily invertible to similarity.
-    weight_source_attribute_name = f"{metric}_diff_norm_abs"
-
-    # Initialize the new FILTERED UNDIRECTED graph
-    filtered_G = nx.Graph()
-    filtered_G.add_nodes_from(graph.nodes(data=True))  # Add all nodes to the new graph
-
-    edges_retained = 0
-    # This set will be used to process each {u,v} pair only once, as the resulting graph is undirected.
-    processed_pairs = set()
-
-    # Handle the case where no threshold is provided
-    if threshold is None:
-        print(f"No threshold provided for metric '{metric}'. Creating undirected graph with all reciprocal edges.")
-        # When no filter is applied, include all existing reciprocal edges
-        for u, v, data_uv in graph.edges(data=True):
-            # Process only if the reverse edge exists and the pair has not been processed yet (to avoid duplicates in an undirected graph)
-            if graph.has_edge(v, u):
-                canonical_pair = tuple(sorted((u, v)))  # Order to get a unique identifier for the {u,v} pair
-                if canonical_pair in processed_pairs:
-                    continue
-                processed_pairs.add(canonical_pair)
-
-                # Retrieve the normalized absolute difference value from the u->v edge
-                diff_norm_abs_value = data_uv.get(weight_source_attribute_name, 0.0)
-
-                # Transform the difference into a similarity weight for Louvain (1 - difference)
-                louvain_weight = 1 - diff_norm_abs_value
-
-                filtered_G.add_edge(u, v, weight=louvain_weight)
-                edges_retained += 1
-
-        print(
-            f"Unfiltered undirected graph for '{metric}' has {filtered_G.number_of_nodes()} nodes and {filtered_G.number_of_edges()} edges ({edges_retained} retained).")
-
-        if filtered_G.number_of_edges() == 0:
-            print("Warning: Unfiltered undirected graph has no edges.")
-            return None
-        return filtered_G
-
-    # Logic for filtering with a specified threshold
-    filter_condition_str = ">= threshold" if keep_above else "<= threshold"
-    print(
-        f"Applying reciprocal filter for '{metric}' with threshold {threshold} {filter_condition_str} on '{filter_attribute_name}'.")
-
-    # Iterate over all edges in the original graph to find reciprocal pairs
-    for u, v, data_uv in graph.edges(data=True):
-        # Process each {u,v} pair only once (since we are creating an undirected graph)
-        canonical_pair = tuple(sorted((u, v)))
-        if canonical_pair in processed_pairs:
-            continue
-        processed_pairs.add(canonical_pair)
-
-        # 4a. Get the filter value for the u -> v edge
-        filter_value_uv = data_uv.get(filter_attribute_name)
-        if filter_value_uv is None:
-            continue  # Skip this pair if the filter attribute does not exist for u->v
-
-        # 4b. Get the filter value for the v -> u edge
-        # Check if the reverse edge exists, which is fundamental for a reciprocal relationship
-        if graph.has_edge(v, u):
-            data_vu = graph.get_edge_data(v, u)
-            filter_value_vu = data_vu.get(filter_attribute_name)
-            if filter_value_vu is None:
-                continue  # Skip if the reverse edge exists but lacks the filter attribute
-        else:
-            # If the reverse edge does not exist, this pair cannot form a complete reciprocal relationship for filtering.
-            continue
-
-        # At this point, both u->v and v->u exist in the original graph and have the filter attribute.
-
-        # 4c. Calculate the relationship intensity for the pair for filtering purposes.
-        # Since _diff_norm_abs and _diff_abs are already absolute and symmetric values,
-        # the pair's intensity is simply the value from one of the two directions.
-        pair_intensity_for_filter = filter_value_uv
-
-        # 4d. Apply the filter condition to the pair's intensity
-        condition_met_for_pair = False
-        if (keep_above and pair_intensity_for_filter >= threshold) or \
-                (not keep_above and pair_intensity_for_filter <= threshold):
-            condition_met_for_pair = True
-
-        # 4e. If the pair does not meet the filter condition, skip it (do not add the undirected edge)
-        if not condition_met_for_pair:
-            continue
-
-        # 4f. If the condition is met, add the UNDIRECTED edge to filtered_G
-        # Retrieve the normalized absolute difference value from the u->v edge (or v->u, it's the same)
-        diff_norm_abs_value = data_uv.get(weight_source_attribute_name, 0.0)
-
-        # Transform the difference into a similarity weight for Louvain (1 - difference)
-        louvain_weight = 1 - diff_norm_abs_value
-
-        filtered_G.add_edge(u, v, weight=louvain_weight)  # Add a single undirected edge
-        edges_retained += 1
-
-    print(
-        f"Undirected graph filtered by '{filter_attribute_name}' (threshold: {threshold}, {filter_condition_str}). Resulting undirected graph has {filtered_G.number_of_nodes()} nodes and {filtered_G.number_of_edges()} edges ({edges_retained} retained).")
-
-    if filtered_G.number_of_edges() == 0:
-        print(f"No edges remain after filtering. Consider adjusting the threshold or filter type.")
-        return None
-
-    return filtered_G
 
 
 def calculate_and_print_centralities(graph: nx.Graph, metric: str) -> Dict[str, Dict[str, float]]:
@@ -557,7 +311,8 @@ def calculate_and_print_centralities(graph: nx.Graph, metric: str) -> Dict[str, 
                                                                      tol=1e-06)
     except nx.PowerIterationFailedConvergence:
         print(
-            f"Warning: Eigenvector centrality did not converge for metric {metric}. This can happen in disconnected graphs or specific weight distributions. Setting scores to 0.0.")
+            f"Warning: Eigenvector centrality did not converge for metric {metric}. This can happen in disconnected "
+            f"graphs or specific weight distributions. Setting scores to 0.0.")
         centrality_scores['eigenvector'] = {node: 0.0 for node in graph.nodes()}
     except Exception as e:
         print(f"Error calculating eigenvector centrality for metric {metric}: {e}. Setting scores to 0.0.")
